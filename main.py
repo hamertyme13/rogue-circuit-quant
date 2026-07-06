@@ -1,5 +1,5 @@
 from rich.console import Console
-
+from rich.progress import track
 from config import (
     PROJECT_NAME,
     VERSION,
@@ -22,11 +22,11 @@ def main():
 
     service = HistoricalDataService()
 
-    for symbol in SYMBOLS:
+    for symbol in track(SYMBOLS, description="Downloading Market Data..."):
 
         service.download_symbol(
             symbol,
-            TIMEFRAMES[0],      # 5m for now
+            TIMEFRAMES[0],      
         )
 
     console.print()
