@@ -1,51 +1,39 @@
 from rich.console import Console
 
-from exchange.client import KrakenClient
+from config import (
+    PROJECT_NAME,
+    VERSION,
+    SYMBOLS,
+    TIMEFRAMES,
+)
+
+from services.historical_data_service import (
+    HistoricalDataService,
+)
 
 console = Console()
 
 
 def main():
 
-    console.rule("[cyan]Rogue Circuit Quant[/cyan]")
-
-    client = KrakenClient()
-
-    console.print(
-        "Connecting to Kraken...",
-        style="yellow",
+    console.rule(
+        f"[cyan]{PROJECT_NAME} v{VERSION}[/cyan]"
     )
 
-    markets = client.load_markets()
+    service = HistoricalDataService()
 
-    console.print(
-        f"Connected! {len(markets)} markets loaded.",
-        style="green",
-    )
+    for symbol in SYMBOLS:
 
-    ticker = client.fetch_ticker("BTC/USD")
+        service.download_symbol(
+            symbol,
+            TIMEFRAMES[0],      # 5m for now
+        )
 
     console.print()
 
     console.print(
-        "BTC/USD",
-        style="bold cyan",
-    )
-
-    console.print(
-        f"Last Price : ${ticker['last']:,.2f}"
-    )
-
-    console.print(
-        f"24h High   : ${ticker['high']:,.2f}"
-    )
-
-    console.print(
-        f"24h Low    : ${ticker['low']:,.2f}"
-    )
-
-    console.print(
-        f"Volume     : {ticker['baseVolume']:,.2f} BTC"
+        "Historical download complete.",
+        style="bold green",
     )
 
 
