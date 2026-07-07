@@ -1,5 +1,4 @@
-from models.trade import Trade
-from risk.portfolio import Portfolio
+from backtesting.execution import ExecutionEngine
 
 
 class BacktestEngine:
@@ -7,24 +6,27 @@ class BacktestEngine:
     def __init__(
         self,
         strategy,
-        portfolio: Portfolio,
+        portfolio,
     ):
+
         self.strategy = strategy
-        self.portfolio = portfolio
+
+        self.execution = ExecutionEngine(
+            portfolio,
+        )
 
     def run(self, df):
 
-        signals = self.strategy.generate_signals(df)
+        for i in range(50, len(df)):
 
-        for signal in signals:
+            current = df.iloc[: i + 1]
 
-            trade = Trade(
-                strategy=signal.strategy,
-                entry_time=signal.timestamp,
-                entry_price=signal.price,
-                quantity=1,
+            signals = self.strategy.generate_signals(
+                current
             )
 
-            self.portfolio.add_trade(trade)
+            for signal in signals:
 
-        return self.portfolio
+                self.execution.execute(signal)
+
+        return self.execution.portfolio

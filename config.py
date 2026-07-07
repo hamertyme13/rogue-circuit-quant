@@ -1,28 +1,23 @@
-from pathlib import Path
+# ==========================
+# Trading Mode
+# ==========================
 
-PROJECT_NAME = "Rogue Circuit Quant"
-VERSION = "0.1.0"
+PAPER_TRADING = True
 
-BASE_DIR = Path(__file__).resolve().parent
+# ==========================
+# Risk Controls
+# ==========================
 
-DATA_DIR = BASE_DIR / "data"
-HISTORICAL_DIR = DATA_DIR / "historical"
+STARTING_BALANCE = 10_000
 
-SYMBOLS = [
-    "BTC/USD",
-    "ETH/USD",
-    "SOL/USD",
-    "XRP/USD",
-    "ADA/USD",
-    "DOGE/USD",
-]
+MAX_OPEN_POSITIONS = 1
 
-TIMEFRAMES = [
-    "5m",
-    "15m",
-    "1h",
-    "4h",
-    "1d",
-]
+MAX_POSITION_RISK = 0.02      # 2%
 
-CANDLE_LIMIT = 720
+MAX_DAILY_LOSS = 0.03         # 3%
+
+MAX_DRAWDOWN = 0.10           # 10%
+
+ALLOW_SHORTS = False
+
+ALLOW_LIVE_TRADING = False

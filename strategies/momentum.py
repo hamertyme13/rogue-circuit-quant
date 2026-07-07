@@ -57,4 +57,15 @@ class MomentumStrategy(Strategy):
                 )
             )
 
+        if not signals:
+
+            signals.append(
+                Signal(
+                    timestamp=latest["timestamp"],
+                    action="HOLD",
+                    price=latest["close"],
+                    confidence=0.0,
+                    strategy="Momentum",
+                )
+            )
         return signals
