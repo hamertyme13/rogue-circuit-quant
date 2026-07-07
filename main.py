@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 from rich.console import Console
-
+from indicators.engine import IndicatorEngine
 from indicators.ema import EMA
 from indicators.rsi import RSI
 from indicators.sma import SMA
@@ -20,11 +20,13 @@ def main():
 
     df = pd.read_csv(DATA)
 
-    df = SMA(period=20).calculate(df)
+    engine = IndicatorEngine([
+        SMA(20),
+        EMA(20),
+        RSI(14),
+    ])
 
-    df = EMA(period=20).calculate(df)
-
-    df = RSI(period=14).calculate(df)
+    df = engine.calculate(df)
 
     console.print(df.tail())
 
