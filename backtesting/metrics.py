@@ -35,3 +35,7 @@ class PerformanceMetrics:
     def ending_equity(self):
 
         return self.portfolio.account_value()
+    
+    def total_trades(self):
+
+        return len(self.portfolio.closed_trades)
