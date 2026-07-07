@@ -2,38 +2,41 @@ from pathlib import Path
 
 import pandas as pd
 from rich.console import Console
-from indicators.engine import IndicatorEngine
-from indicators.ema import EMA
-from indicators.rsi import RSI
-from indicators.sma import SMA
+
+from backtesting.engine import BacktestEngine
+from risk.portfolio import Portfolio
+from strategies.momentum import MomentumStrategy
 
 console = Console()
 
-DATA = Path(
-    "data/historical/BTC_USD/5m.csv"
-)
+DATA = Path("data/historical/BTC_USD/5m.csv")
 
 
 def main():
 
-    console.rule("[cyan]Indicator Engine[/cyan]")
+    console.rule("[cyan]Backtest Demo[/cyan]")
 
     df = pd.read_csv(DATA)
 
-    engine = IndicatorEngine([
-        SMA(20),
-        EMA(20),
-        RSI(14),
-    ])
+    strategy = MomentumStrategy()
 
-    df = engine.calculate(df)
+    portfolio = Portfolio()
 
-    console.print(df.tail())
+    engine = BacktestEngine(
+        strategy,
+        portfolio,
+    )
+
+    portfolio = engine.run(df)
 
     console.print()
 
     console.print(
-        "[green]Indicator calculations successful![/green]"
+        f"Trades Executed : {portfolio.total_trades()}"
+    )
+
+    console.print(
+        f"Portfolio Equity : ${portfolio.equity():,.2f}"
     )
 
 
