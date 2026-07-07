@@ -37,7 +37,13 @@ def main():
     portfolio = Portfolio()
 
     engine = BacktestEngine(
-        MomentumStrategy(),
+        MomentumStrategy(
+            fast_ema=10,
+            slow_ema=40,
+            rsi_period=10,
+            buy_rsi=60,
+            sell_rsi=40,
+        ),
         portfolio,
     )
 
