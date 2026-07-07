@@ -1,39 +1,37 @@
-from rich.console import Console
-from rich.progress import track
-from config import (
-    PROJECT_NAME,
-    VERSION,
-    SYMBOLS,
-    TIMEFRAMES,
-)
+from pathlib import Path
 
-from services.historical_data_service import (
-    HistoricalDataService,
-)
+import pandas as pd
+from rich.console import Console
+
+from indicators.ema import EMA
+from indicators.rsi import RSI
+from indicators.sma import SMA
 
 console = Console()
+
+DATA = Path(
+    "data/historical/BTC_USD/5m.csv"
+)
 
 
 def main():
 
-    console.rule(
-        f"[cyan]{PROJECT_NAME} v{VERSION}[/cyan]"
-    )
+    console.rule("[cyan]Indicator Engine[/cyan]")
 
-    service = HistoricalDataService()
+    df = pd.read_csv(DATA)
 
-    for symbol in track(SYMBOLS, description="Downloading Market Data..."):
+    df = SMA(period=20).calculate(df)
 
-        service.download_symbol(
-            symbol,
-            TIMEFRAMES[0],      
-        )
+    df = EMA(period=20).calculate(df)
+
+    df = RSI(period=14).calculate(df)
+
+    console.print(df.tail())
 
     console.print()
 
     console.print(
-        "Historical download complete.",
-        style="bold green",
+        "[green]Indicator calculations successful![/green]"
     )
 
 
