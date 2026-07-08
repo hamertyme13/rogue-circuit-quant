@@ -1,8 +1,15 @@
+import os
+from pathlib import Path
+
 # ==========================
 # Trading Mode
 # ==========================
 
 PAPER_TRADING = True
+
+KRAKEN_API_KEY = os.getenv("KRAKEN_API_KEY", "")
+
+KRAKEN_API_SECRET = os.getenv("KRAKEN_API_SECRET", "")
 
 # ==========================
 # Risk Controls
@@ -21,6 +28,32 @@ MAX_DRAWDOWN = 0.10           # 10%
 ALLOW_SHORTS = False
 
 ALLOW_LIVE_TRADING = False
+
+MAX_ORDER_NOTIONAL = 250
+
+MIN_SIGNAL_CONFIDENCE = 0.70
+
+# ==========================
+# Automated Trading
+# ==========================
+
+LIVE_SYMBOLS = ["BTC/USD"]
+
+LIVE_TIMEFRAME = "5m"
+
+LIVE_CANDLE_LIMIT = 300
+
+LIVE_LOOP_SECONDS = 60
+
+REOPTIMIZE_EVERY_CYCLES = 12
+
+# ==========================
+# Desktop Dashboard
+# ==========================
+
+LEDGER_DB_PATH = Path("data/rogue_circuit_ledger.sqlite3")
+
+PORTFOLIO_ALERT_PERCENT = 0.05
 
 # ==========================
 # Strategy Optimization

@@ -39,31 +39,31 @@ class StrategyOptimizer:
                                 sell_rsi=sell_rsi
                             )
 
-                    portfolio = Portfolio()
+                            portfolio = Portfolio()
 
-                    engine = BacktestEngine(
-                        strategy,
-                        portfolio,
-                    )
+                            engine = BacktestEngine(
+                                strategy,
+                                portfolio,
+                            )
 
-                    portfolio = engine.run(df)
+                            portfolio = engine.run(df)
 
-                    metrics = PerformanceMetrics(
-                        portfolio
-                    )
+                            metrics = PerformanceMetrics(
+                                portfolio
+                            )
 
-                    results.append(
-                        OptimizationResult(
-                            fast_ema=fast,
-                            slow_ema=slow,
-                            rsi_period=rsi,
-                            buy_rsi=buy_rsi,
-                            sell_rsi=sell_rsi,
-                            trades=portfolio.total_trades(),
-                            win_rate=metrics.win_rate(),
-                            net_profit=metrics.total_profit(),
-                            drawdown=metrics.max_drawdown(),
-                        )
-                    )
+                            results.append(
+                                OptimizationResult(
+                                    fast_ema=fast,
+                                    slow_ema=slow,
+                                    rsi_period=rsi,
+                                    buy_rsi=buy_rsi,
+                                    sell_rsi=sell_rsi,
+                                    trades=portfolio.total_trades(),
+                                    win_rate=metrics.win_rate(),
+                                    net_profit=metrics.total_profit(),
+                                    drawdown=metrics.max_drawdown(),
+                                )
+                            )
 
         return results

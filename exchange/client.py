@@ -6,14 +6,22 @@ Responsible only for communicating with Kraken.
 
 import ccxt
 
+from config import KRAKEN_API_KEY, KRAKEN_API_SECRET
+
 
 class KrakenClient:
 
     def __init__(self):
 
-        self.exchange = ccxt.kraken({
+        options = {
             "enableRateLimit": True,
-        })
+        }
+
+        if KRAKEN_API_KEY and KRAKEN_API_SECRET:
+            options["apiKey"] = KRAKEN_API_KEY
+            options["secret"] = KRAKEN_API_SECRET
+
+        self.exchange = ccxt.kraken(options)
 
     def load_markets(self):
         """Load all available Kraken markets."""
@@ -42,3 +50,17 @@ class KrakenClient:
     def fetch_balance(self):
         """Will be used later after API keys are added."""
         return self.exchange.fetch_balance()
+
+    def create_market_order(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+    ):
+        """Create a Kraken market order through ccxt."""
+        return self.exchange.create_order(
+            symbol=symbol,
+            type="market",
+            side=side.lower(),
+            amount=amount,
+        )
