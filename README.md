@@ -69,3 +69,22 @@ python3 scripts/package_desktop_app.py
 
 If PyInstaller is not installed, the script will print the install command and
 exit without changing the project.
+
+## Browser Command Center
+
+Run the browser app:
+
+```bash
+python3 web_app.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+The browser app uses the same SQLite ledger, Kraken valuation logic, bot
+service, emergency stop, risk controls, and trading journal as the desktop app.
+It serves a Rogue Circuit themed frontend plus local JSON API endpoints, making
+it easier to connect to the Rogue Circuit website later.
