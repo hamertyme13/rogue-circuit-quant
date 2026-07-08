@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rogue Circuit Quant</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">RC</div>
+          <div>
+            <p class="eyebrow">Rogue Circuit OS</p>
+            <h1>Rogue Circuit Quant</h1>
+          </div>
+        </div>
+        <div class="status-pill" id="service-status">Loading</div>
+      </header>
+
+      <section class="metrics-grid" id="metrics"></section>
+
+      <section class="workspace">
+        <article class="panel chart-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Portfolio</p>
+              <h2>Investment Value</h2>
+            </div>
+            <button class="button ghost" id="refresh-button">Refresh</button>
+          </div>
+          <canvas id="value-chart" width="960" height="420"></canvas>
+        </article>
+
+        <aside class="control-stack">
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Investment Ledger</h2>
+            </div>
+            <label>
+              Amount
+              <input id="ledger-amount" type="number" min="0" step="0.01" />
+            </label>
+            <label>
+              Note
+              <input id="ledger-note" type="text" />
+            </label>
+            <div class="button-row">
+              <button class="button primary" id="deposit-button">Add Deposit</button>
+              <button class="button ghost" id="withdraw-button">Add Withdrawal</button>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Portfolio Value</h2>
+            </div>
+            <label>
+              Manual Value
+              <input id="manual-value" type="number" min="0" step="0.01" />
+            </label>
+            <button class="button accent" id="manual-snapshot-button">Record Manual Snapshot</button>
+            <button class="button ghost" id="kraken-snapshot-button">Refresh Kraken Snapshot</button>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Bot Controls</h2>
+            </div>
+            <div class="button-row">
+              <button class="button primary" id="run-cycle-button">Run One Cycle</button>
+              <button class="button primary" id="start-bot-button">Start Bot</button>
+            </div>
+            <div class="button-row">
+              <button class="button ghost" id="stop-bot-button">Stop Bot</button>
+              <button class="button danger" id="emergency-button">Emergency Stop</button>
+            </div>
+            <button class="button accent" id="resume-button">Resume Trading</button>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Risk Controls</h2>
+            </div>
+            <label>
+              Max Order $
+              <input id="max-order" type="number" min="0" step="0.01" />
+            </label>
+            <label>
+              Min Confidence
+              <input id="min-confidence" type="number" min="0" max="1" step="0.01" />
+            </label>
+            <label>
+              Loop Seconds
+              <input id="loop-seconds" type="number" min="1" step="1" />
+            </label>
+            <button class="button accent" id="save-settings-button">Apply Risk Controls</button>
+          </article>
+        </aside>
+      </section>
+
+      <section class="tables-grid">
+        <article class="panel table-panel">
+          <h2>Deposits / Withdrawals</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Type</th><th>Amount</th><th>Note</th><th>Time</th></tr>
+              </thead>
+              <tbody id="transactions-table"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel table-panel">
+          <h2>Trades</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Symbol</th><th>Side</th><th>Quantity</th><th>Price</th><th>PnL</th></tr>
+              </thead>
+              <tbody id="trades-table"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel table-panel">
+          <h2>Decision Journal</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Symbol</th><th>Signal</th><th>Confidence</th><th>Executed</th><th>Reason</th></tr>
+              </thead>
+              <tbody id="decisions-table"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel table-panel">
+          <h2>Strategy Performance</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Symbol</th><th>Strategy</th><th>Score</th><th>Profit</th><th>Win</th><th>DD</th><th>Trades</th></tr>
+              </thead>
+              <tbody id="strategies-table"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel table-panel alerts-panel">
+          <h2>Alerts</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Level</th><th>Message</th><th>Source</th><th>Time</th></tr>
+              </thead>
+              <tbody id="alerts-table"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <p class="status-line" id="status-line">Ready</p>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
