@@ -6,3 +6,7 @@ __pycache__/
 .idea/
 .vscode/
 logs/
+data/rogue_circuit_ledger.sqlite3
+build/
+dist/
+*.spec

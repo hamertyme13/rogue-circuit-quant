@@ -36,3 +36,36 @@ Safety defaults:
 
 Only set `PAPER_TRADING = False` and `ALLOW_LIVE_TRADING = True` after
 paper-trading results have been reviewed.
+
+## Desktop Investment Dashboard
+
+Run the local desktop app:
+
+```bash
+python3 desktop_app.py
+```
+
+The dashboard stores its investment ledger in SQLite at
+`data/rogue_circuit_ledger.sqlite3`. It tracks deposits, withdrawals, portfolio
+value snapshots, trade records, net growth, and growth percentage.
+
+Use the dashboard to:
+
+- add deposits and withdrawals
+- record manual portfolio snapshots
+- refresh current Kraken balances when API credentials are configured
+- run one paper/live trading cycle through the existing trading engine
+- start and stop the background bot service
+- activate an emergency stop and resume trading afterward
+- tune runtime risk controls, including order size, confidence, and loop timing
+- review the decision journal, strategy performance, trade records, and alerts
+- view recent ledger activity and the portfolio value chart
+
+Package the desktop app with PyInstaller:
+
+```bash
+python3 scripts/package_desktop_app.py
+```
+
+If PyInstaller is not installed, the script will print the install command and
+exit without changing the project.

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 # ==========================
 # Trading Mode
@@ -45,6 +46,14 @@ LIVE_CANDLE_LIMIT = 300
 LIVE_LOOP_SECONDS = 60
 
 REOPTIMIZE_EVERY_CYCLES = 12
+
+# ==========================
+# Desktop Dashboard
+# ==========================
+
+LEDGER_DB_PATH = Path("data/rogue_circuit_ledger.sqlite3")
+
+PORTFOLIO_ALERT_PERCENT = 0.05
 
 # ==========================
 # Strategy Optimization

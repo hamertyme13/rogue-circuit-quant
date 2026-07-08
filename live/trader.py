@@ -1,4 +1,6 @@
 import time
+from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 from rich.console import Console
@@ -20,9 +22,38 @@ from exchange.client import KrakenClient
 from models.constants import BUY, HOLD, SELL
 from optimization.optimizer import StrategyOptimizer
 from risk.portfolio import Portfolio
+from risk.kill_switch import KillSwitch
 from risk.position_manager import PositionManager
 from risk.position_size import PositionSizer
 from risk.risk_manager import RiskManager
+
+
+@dataclass
+class TradeCycleEvent:
+
+    symbol: str
+    action: str
+    confidence: float
+    price: float
+    strategy: str
+    executed: bool
+    quantity: float = 0.0
+    reason: str = ""
+    order_id: str = ""
+    mode: str = "paper"
+
+
+@dataclass
+class StrategyPerformanceSnapshot:
+
+    symbol: str
+    strategy: str
+    score: float
+    net_profit: float
+    win_rate: float
+    drawdown: float
+    trades: int
+    rationale: str
 
 
 class AutomatedKrakenTrader:
@@ -41,8 +72,16 @@ class AutomatedKrakenTrader:
         self.risk = RiskManager(self.portfolio)
         self.sizer = PositionSizer()
         self.positions = PositionManager(self.portfolio)
+        self.kill_switch = KillSwitch()
         self.decisions: dict[str, StrategyDecision] = {}
+        self.strategy_performance: dict[
+            str,
+            StrategyPerformanceSnapshot,
+        ] = {}
         self.cycles = 0
+        self.max_order_notional = MAX_ORDER_NOTIONAL
+        self.min_signal_confidence = MIN_SIGNAL_CONFIDENCE
+        self.loop_seconds = LIVE_LOOP_SECONDS
 
     def run_forever(self):
 
@@ -54,9 +93,25 @@ class AutomatedKrakenTrader:
 
         while True:
             self.run_once()
-            time.sleep(LIVE_LOOP_SECONDS)
+            time.sleep(self.loop_seconds)
 
-    def run_once(self):
+    def run_once(self) -> list[TradeCycleEvent]:
+
+        if self.kill_switch.active():
+            return [
+                TradeCycleEvent(
+                    symbol="SYSTEM",
+                    action=HOLD,
+                    confidence=0.0,
+                    price=0.0,
+                    strategy="KillSwitch",
+                    executed=False,
+                    reason="Emergency stop is active.",
+                    mode=self.mode,
+                )
+            ]
+
+        events = []
 
         for symbol in LIVE_SYMBOLS:
             df = self._fetch_market_frame(symbol)
@@ -78,9 +133,26 @@ class AutomatedKrakenTrader:
                 f"price={signal.price:,.2f}"
             )
 
-            self._execute_signal(symbol, signal)
+            events.append(
+                self._execute_signal(symbol, signal)
+            )
 
         self.cycles += 1
+
+        return events
+
+    @property
+    def mode(self) -> str:
+
+        return "paper" if PAPER_TRADING else "live"
+
+    def emergency_stop(self):
+
+        self.kill_switch.stop()
+
+    def resume_trading(self):
+
+        self.kill_switch.resume()
 
     def _should_reoptimize(self, symbol: str) -> bool:
 
@@ -107,30 +179,71 @@ class AutomatedKrakenTrader:
             f"drawdown={best.drawdown:.2%}"
         )
 
+        self.strategy_performance[symbol] = (
+            StrategyPerformanceSnapshot(
+                symbol=symbol,
+                strategy="Momentum",
+                score=decision.score,
+                net_profit=best.net_profit,
+                win_rate=best.win_rate,
+                drawdown=best.drawdown,
+                trades=best.trades,
+                rationale=decision.rationale,
+            )
+        )
+
         return decision
 
-    def _execute_signal(self, symbol: str, signal):
+    def _execute_signal(self, symbol: str, signal) -> TradeCycleEvent:
 
         if (
             signal.action == HOLD
-            or signal.confidence < MIN_SIGNAL_CONFIDENCE
+            or signal.confidence < self.min_signal_confidence
         ):
-            return
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                reason="Signal held or confidence was below threshold.",
+                mode=self.mode,
+            )
 
         if signal.action == BUY:
-            self._buy(symbol, signal)
-            return
+            return self._buy(symbol, signal)
 
         if signal.action == SELL:
-            self._sell(symbol, signal)
+            return self._sell(symbol, signal)
 
-    def _buy(self, symbol: str, signal):
+        return TradeCycleEvent(
+            symbol=symbol,
+            action=signal.action,
+            confidence=signal.confidence,
+            price=signal.price,
+            strategy=signal.strategy,
+            executed=False,
+            reason="Unsupported signal action.",
+            mode=self.mode,
+        )
+
+    def _buy(self, symbol: str, signal) -> TradeCycleEvent:
 
         if not self.risk.can_open_trade():
             self.console.print(
                 f"{symbol} buy skipped by risk controls"
             )
-            return
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                reason="Risk controls blocked the buy.",
+                mode=self.mode,
+            )
 
         quantity = self.sizer.calculate_quantity(
             self.portfolio.cash,
@@ -138,7 +251,7 @@ class AutomatedKrakenTrader:
         )
         quantity = min(
             quantity,
-            MAX_ORDER_NOTIONAL / signal.price,
+            self.max_order_notional / signal.price,
         )
 
         if PAPER_TRADING:
@@ -146,15 +259,47 @@ class AutomatedKrakenTrader:
             self.console.print(
                 f"{symbol} paper buy quantity={quantity:.8f}"
             )
-            return
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=True,
+                quantity=quantity,
+                reason="Paper buy opened.",
+                mode=self.mode,
+            )
 
-        self._place_live_order(symbol, "buy", quantity)
+        order = self._place_live_order(symbol, "buy", quantity)
         self.positions.open_position(signal, quantity)
 
-    def _sell(self, symbol: str, signal):
+        return TradeCycleEvent(
+            symbol=symbol,
+            action=signal.action,
+            confidence=signal.confidence,
+            price=signal.price,
+            strategy=signal.strategy,
+            executed=True,
+            quantity=quantity,
+            order_id=self._order_id(order),
+            reason="Live buy submitted.",
+            mode=self.mode,
+        )
+
+    def _sell(self, symbol: str, signal) -> TradeCycleEvent:
 
         if not self.portfolio.has_open_position():
-            return
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                reason="No open position to sell.",
+                mode=self.mode,
+            )
 
         quantity = self.portfolio.open_trades[0].quantity
 
@@ -163,10 +308,33 @@ class AutomatedKrakenTrader:
             self.console.print(
                 f"{symbol} paper sell quantity={quantity:.8f}"
             )
-            return
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=True,
+                quantity=quantity,
+                reason="Paper sell closed.",
+                mode=self.mode,
+            )
 
-        self._place_live_order(symbol, "sell", quantity)
+        order = self._place_live_order(symbol, "sell", quantity)
         self.positions.close_position(signal)
+
+        return TradeCycleEvent(
+            symbol=symbol,
+            action=signal.action,
+            confidence=signal.confidence,
+            price=signal.price,
+            strategy=signal.strategy,
+            executed=True,
+            quantity=quantity,
+            order_id=self._order_id(order),
+            reason="Live sell submitted.",
+            mode=self.mode,
+        )
 
     def _place_live_order(
         self,
@@ -190,6 +358,13 @@ class AutomatedKrakenTrader:
         self.console.print(order)
 
         return order
+
+    def _order_id(self, order: dict[str, Any] | None) -> str:
+
+        if not order:
+            return ""
+
+        return str(order.get("id") or order.get("clientOrderId") or "")
 
     def _fetch_market_frame(self, symbol: str) -> pd.DataFrame:
 
