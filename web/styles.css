@@ -42,7 +42,8 @@ body {
 
 .topbar,
 .panel,
-.metric-card {
+.metric-card,
+.system-card {
   border: 1px solid var(--border-secondary);
   background: rgba(10, 13, 22, 0.88);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.32);
@@ -135,6 +136,36 @@ h2 {
   font-size: 22px;
 }
 
+.system-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.system-card {
+  padding: 12px 14px;
+  background: rgba(16, 21, 34, 0.82);
+}
+
+.system-card span {
+  display: block;
+  color: var(--muted);
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.system-card strong {
+  display: block;
+  margin-top: 7px;
+  color: var(--secondary);
+  font-family: "Courier New", monospace;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) 420px;
@@ -199,6 +230,7 @@ input:focus {
 }
 
 .button {
+  position: relative;
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--border-secondary);
@@ -207,11 +239,75 @@ input:focus {
   cursor: pointer;
   font-size: 13px;
   font-weight: 800;
+  overflow: hidden;
+  transform: translateY(0);
+  transition:
+    transform 120ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
 }
 
 .button:hover {
   border-color: var(--secondary);
   background: rgba(25, 230, 255, 0.1);
+  box-shadow: 0 0 0 1px rgba(25, 230, 255, 0.12), 0 0 24px rgba(25, 230, 255, 0.14);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--secondary);
+  outline-offset: 3px;
+}
+
+.button:active,
+.button.is-pressed {
+  transform: translateY(2px) scale(0.985);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.32);
+}
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.82;
+}
+
+.button.is-loading {
+  color: var(--text);
+  border-color: var(--secondary);
+  background:
+    linear-gradient(90deg, rgba(25, 230, 255, 0.06), rgba(57, 255, 136, 0.16), rgba(25, 230, 255, 0.06)),
+    var(--raised);
+  background-size: 220% 100%;
+  animation: button-scan 900ms linear infinite;
+}
+
+.button.is-loading::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(237, 237, 237, 0.28);
+  border-top-color: var(--secondary);
+  border-radius: 50%;
+  transform: translateY(-50%);
+  animation: spin 720ms linear infinite;
+}
+
+.button.is-success {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  box-shadow: 0 0 24px rgba(57, 255, 136, 0.2);
+}
+
+.button.is-error {
+  border-color: var(--danger);
+  background: rgba(255, 77, 125, 0.14);
+  color: var(--danger);
+  box-shadow: 0 0 24px rgba(255, 77, 125, 0.18);
 }
 
 .button.primary {
@@ -233,6 +329,91 @@ input:focus {
 
 .button.ghost {
   background: transparent;
+}
+
+.readout-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.compact-readout {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.readout-grid div {
+  border: 1px solid rgba(25, 230, 255, 0.18);
+  background: rgba(16, 21, 34, 0.72);
+  padding: 10px;
+}
+
+.readout-grid span {
+  display: block;
+  color: var(--muted);
+  font-family: "Courier New", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.readout-grid strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--primary);
+  font-family: "Courier New", monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.gate-message {
+  border-left: 3px solid var(--danger);
+  margin: 0 0 14px;
+  padding: 8px 10px;
+  background: rgba(255, 61, 113, 0.08);
+  color: var(--danger);
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.gate-message[data-ready="true"] {
+  border-left-color: var(--primary);
+  background: rgba(57, 255, 136, 0.08);
+  color: var(--primary);
+}
+
+.service-detail,
+.panel-note {
+  color: var(--muted);
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.service-detail {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
+.service-detail[data-tone="success"] {
+  color: var(--primary);
+}
+
+.service-detail[data-tone="error"] {
+  color: var(--danger);
+}
+
+.scan-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.opportunity-panel {
+  margin-top: 14px;
 }
 
 .tables-grid {
@@ -291,4 +472,77 @@ td {
   font-family: "Courier New", monospace;
   font-size: 13px;
   font-weight: 700;
+  transition: color 160ms ease;
+}
+
+.status-line[data-tone="working"] {
+  color: var(--secondary);
+}
+
+.status-line[data-tone="success"] {
+  color: var(--primary);
+}
+
+.status-line[data-tone="error"] {
+  color: var(--danger);
+}
+
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 20;
+  max-width: min(420px, calc(100vw - 48px));
+  border: 1px solid var(--border-secondary);
+  background: rgba(10, 13, 22, 0.96);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
+  color: var(--secondary);
+  font-family: "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 12px 14px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(12px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast[data-tone="success"] {
+  border-color: var(--border-primary);
+  color: var(--primary);
+}
+
+.toast[data-tone="error"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+@keyframes button-scan {
+  from {
+    background-position: 0% 50%;
+  }
+
+  to {
+    background-position: 220% 50%;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: translateY(-50%) rotate(0deg);
+  }
+
+  to {
+    transform: translateY(-50%) rotate(360deg);
+  }
 }

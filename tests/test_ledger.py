@@ -85,3 +85,31 @@ def test_ledger_records_decisions_strategy_performance_alerts_and_settings(
     assert alert["level"] == "INFO"
     assert controls.max_order_notional == 250
     assert controls.emergency_stop is True
+
+
+def test_ledger_records_audit_and_paper_live_comparison(tmp_path):
+    ledger = InvestmentLedger(tmp_path / "ledger.sqlite3")
+
+    ledger.record_audit_event(
+        actor="tester",
+        action="settings_saved",
+        detail="Risk controls updated.",
+        source="unit",
+    )
+    ledger.record_paper_live_comparison(
+        symbol="BTC/USD",
+        paper_action="BUY",
+        live_action="LOCKED",
+        paper_price=50_000,
+        live_price=50_000,
+        difference=0,
+        reason="Deployment mode locked live trading.",
+    )
+
+    audit = ledger.audit_log()[0]
+    comparison = ledger.paper_live_comparisons()[0]
+
+    assert audit["actor"] == "tester"
+    assert audit["action"] == "settings_saved"
+    assert comparison["symbol"] == "BTC/USD"
+    assert comparison["live_action"] == "LOCKED"

@@ -20,13 +20,27 @@ class Portfolio:
 
         self.high_water_mark = starting_balance
 
+        self.market_prices = {}
+
     # -----------------------------
     # Position Management
     # -----------------------------
 
     def open_trade(self, trade: Trade):
 
+        if trade.entry_notional == 0:
+            trade.entry_notional = trade.entry_price * trade.quantity
+
+        if trade.entry_fee == 0:
+            trade.entry_fee = fee_model.calculate(trade.entry_notional)
+
+        self.cash -= trade.entry_notional + trade.entry_fee
         self.open_trades.append(trade)
+        self.update_market_price(
+            trade.symbol,
+            trade.entry_price,
+        )
+        self.record_equity()
 
     def close_trade(
         self,
@@ -44,15 +58,17 @@ class Portfolio:
             - trade.entry_price
         ) * trade.quantity
 
-        fees = fee_model.calculate(
-            exit_price * trade.quantity
-        )
+        proceeds = exit_price * trade.quantity
 
-        trade.pnl = gross - fees
+        fees = fee_model.calculate(proceeds)
+
+        trade.exit_fee = fees
+
+        trade.pnl = gross - trade.entry_fee - fees
 
         trade.status = "CLOSED"
 
-        self.cash += trade.pnl
+        self.cash += proceeds - fees
 
         self.open_trades.remove(trade)
 
@@ -76,6 +92,18 @@ class Portfolio:
 
         return len(self.open_trades) > 0
 
+    def open_position_for(self, symbol: str):
+
+        for trade in self.open_trades:
+            if trade.symbol == symbol:
+                return trade
+
+        return None
+
+    def has_open_position_for(self, symbol: str):
+
+        return self.open_position_for(symbol) is not None
+
     def realized_pnl(self):
 
         return sum(
@@ -85,11 +113,33 @@ class Portfolio:
 
     def equity(self):
 
-        return self.cash
+        return self.account_value()
+
+    def position_value(self):
+
+        total = 0.0
+
+        for trade in self.open_trades:
+            price = self.market_prices.get(
+                trade.symbol,
+                trade.entry_price,
+            )
+            total += price * trade.quantity
+
+        return total
+
+    def update_market_price(
+        self,
+        symbol: str,
+        price: float,
+    ):
+
+        if symbol:
+            self.market_prices[symbol] = float(price)
     
     def account_value(self):
 
-        return self.cash
+        return self.cash + self.position_value()
 
 
     def drawdown_percent(self):

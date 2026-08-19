@@ -84,7 +84,58 @@ Then open:
 http://127.0.0.1:8765
 ```
 
+Install or refresh the macOS Desktop launcher:
+
+```bash
+python3 scripts/install_macos_launcher.py --target ~/Desktop
+```
+
+This creates `Rogue Circuit Quant.app` with a custom Rogue Circuit icon. Opening
+the app starts the local browser command center and launches it in your browser.
+
 The browser app uses the same SQLite ledger, Kraken valuation logic, bot
 service, emergency stop, risk controls, and trading journal as the desktop app.
 It serves a Rogue Circuit themed frontend plus local JSON API endpoints, making
 it easier to connect to the Rogue Circuit website later.
+
+New browser/API capabilities include:
+
+- optional token auth with `ROGUE_QUANT_AUTH_TOKEN`
+- encrypted Kraken credential vault storage
+- deployment modes through `ROGUE_QUANT_MODE`
+- strategy performance, decision journal, audit log, and paper/live comparison
+- richer chart data for equity, drawdown, and daily PnL views
+- webhook/email notification routing hooks, including high-confidence
+  opportunity alerts
+- FastAPI adapter for production-style API hosting
+
+Run the FastAPI adapter:
+
+```bash
+uvicorn api.fastapi_app:create_app --factory --host 127.0.0.1 --port 8765
+```
+
+Useful environment variables:
+
+- `ROGUE_QUANT_AUTH_TOKEN`: requires `X-Rogue-Token` on write requests
+- `ROGUE_QUANT_MODE`: `local`, `paper`, `live_locked`, `live_enabled`, or `maintenance`
+- `ROGUE_QUANT_TARGET_ASSET`: target balance asset, defaults to `QUID`
+- `ROGUE_QUANT_TARGET_SYMBOL`: target market, defaults to `QUID/USD`
+- `ROGUE_QUANT_LIVE_SYMBOLS`: comma-separated bot symbols, defaults to `BTC/USD`
+- `ROGUE_QUANT_WEBHOOK_URL`: optional JSON webhook for critical alerts
+- `ROGUE_QUANT_EMAIL_TO`: placeholder email route for future SMTP delivery
+- `ROGUE_QUANT_OPPORTUNITY_MIN_CONFIDENCE`: BUY signal confidence threshold
+- `ROGUE_QUANT_OPPORTUNITY_MIN_WIN_RATE`: backtested win-rate threshold
+- `ROGUE_QUANT_OPPORTUNITY_MIN_NET_PROFIT`: backtested profit threshold
+
+Opportunity alerts mean a symbol passed the configured signal and backtest
+filters. They are not profit guarantees.
+
+For Kraken Pro connection, create a spot API key with Query Funds, Query Open
+Orders & Trades, Query Closed Orders & Trades, Modify Orders, and Cancel/Close
+Orders permissions. Do not grant Withdraw Funds. Store the key in the browser
+credential vault, run Check Kraken / QUID, then use Use QUID for Bot if the
+market and balance checks pass.
+
+See `docs/website_integration.md` for the Rogue Circuit website connection plan.
+See `docs/ml_development_sequence.md` for the Sprint 10 ML roadmap.

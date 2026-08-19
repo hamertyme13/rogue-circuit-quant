@@ -21,6 +21,33 @@
 
       <section class="metrics-grid" id="metrics"></section>
 
+      <section class="system-grid">
+        <article class="system-card">
+          <span>Mode</span>
+          <strong id="deployment-mode">Loading</strong>
+        </article>
+        <article class="system-card">
+          <span>Auth</span>
+          <strong id="auth-mode">Loading</strong>
+        </article>
+        <article class="system-card">
+          <span>Credentials</span>
+          <strong id="credential-mode">Loading</strong>
+        </article>
+        <article class="system-card">
+          <span>Notifications</span>
+          <strong id="notification-mode">Loading</strong>
+        </article>
+        <article class="system-card">
+          <span>Target</span>
+          <strong id="target-mode">Loading</strong>
+        </article>
+        <article class="system-card">
+          <span>Live Gate</span>
+          <strong id="live-gate-mode">Loading</strong>
+        </article>
+      </section>
+
       <section class="workspace">
         <article class="panel chart-panel">
           <div class="panel-header">
@@ -68,6 +95,34 @@
             <div class="panel-header">
               <h2>Bot Controls</h2>
             </div>
+            <div class="readout-grid compact-readout">
+              <div>
+                <span>Paper Cycles</span>
+                <strong id="paper-cycles">0</strong>
+              </div>
+              <div>
+                <span>Closed Trades</span>
+                <strong id="paper-closed-trades">0</strong>
+              </div>
+              <div>
+                <span>Paper Growth</span>
+                <strong id="paper-growth">0.00%</strong>
+              </div>
+              <div>
+                <span>Max Drawdown</span>
+                <strong id="paper-drawdown">0.00%</strong>
+              </div>
+              <div>
+                <span>Service Cycles</span>
+                <strong id="service-cycles">0</strong>
+              </div>
+              <div>
+                <span>Service Errors</span>
+                <strong id="service-errors">0</strong>
+              </div>
+            </div>
+            <p class="service-detail" id="service-detail">Waiting to start.</p>
+            <p class="gate-message" id="live-gate-message">Live deployment remains locked.</p>
             <div class="button-row">
               <button class="button primary" id="run-cycle-button">Run One Cycle</button>
               <button class="button primary" id="start-bot-button">Start Bot</button>
@@ -97,7 +152,75 @@
             </label>
             <button class="button accent" id="save-settings-button">Apply Risk Controls</button>
           </article>
+
+          <article class="panel">
+            <div class="panel-header">
+              <h2>Kraken Credential Vault</h2>
+            </div>
+            <label>
+              API Key
+              <input id="kraken-api-key" type="password" autocomplete="off" />
+            </label>
+            <label>
+              API Secret
+              <input id="kraken-api-secret" type="password" autocomplete="off" />
+            </label>
+            <button class="button accent" id="save-credentials-button">Encrypt Credentials</button>
+            <button class="button ghost" id="check-kraken-button">Check Kraken / QUID</button>
+            <button class="button primary" id="use-target-button">Use QUID for Bot</button>
+            <div class="scan-controls">
+              <label>
+                Markets to Analyze
+                <input id="scan-limit" type="number" min="2" max="12" value="8" />
+              </label>
+              <label>
+                Markets to Trade
+                <input id="active-limit" type="number" min="1" max="5" value="3" />
+              </label>
+            </div>
+            <button class="button accent" id="scan-markets-button">Scan and Rank Kraken Markets</button>
+            <div class="readout-grid">
+              <div>
+                <span>Asset</span>
+                <strong id="target-asset-symbol">QUID/USD</strong>
+              </div>
+              <div>
+                <span>Balance</span>
+                <strong id="target-asset-balance">0.00000000</strong>
+              </div>
+              <div>
+                <span>Value</span>
+                <strong id="target-asset-value">$0.00</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong id="target-asset-ready">Locked</strong>
+              </div>
+              <div>
+                <span>Bot Symbols</span>
+                <strong id="bot-symbols">BTC/USD</strong>
+              </div>
+            </div>
+          </article>
         </aside>
+      </section>
+
+      <section class="panel opportunity-panel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Market Intelligence</p>
+            <h2>Paper Opportunity Rankings</h2>
+          </div>
+          <span class="panel-note">Historical estimates, not guaranteed returns</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Rank</th><th>Market</th><th>Signal</th><th>Confidence</th><th>Score</th><th>Backtest Profit</th><th>Win Rate</th><th>Drawdown</th></tr>
+            </thead>
+            <tbody id="opportunities-table"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="tables-grid">
@@ -160,9 +283,33 @@
             </table>
           </div>
         </article>
+
+        <article class="panel table-panel">
+          <h2>Paper / Live Comparison</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Symbol</th><th>Paper</th><th>Live</th><th>Price</th><th>Diff</th><th>Reason</th></tr>
+              </thead>
+              <tbody id="paper-live-table"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel table-panel">
+          <h2>Audit Log</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Action</th><th>Detail</th><th>Source</th><th>Time</th></tr>
+              </thead>
+              <tbody id="audit-table"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
-      <p class="status-line" id="status-line">Ready</p>
+      <p class="status-line" id="status-line" role="status" aria-live="polite">Ready</p>
     </main>
     <script src="/app.js"></script>
   </body>

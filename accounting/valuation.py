@@ -23,6 +23,7 @@ class BalanceValuation:
     cash_value: float
     positions_value: float
     positions: dict[str, float]
+    unpriced_positions: dict[str, float] | None = None
 
 
 class KrakenBalanceValuator:
@@ -38,6 +39,7 @@ class KrakenBalanceValuator:
         cash_value = 0.0
         positions_value = 0.0
         positions = {}
+        unpriced_positions = {}
 
         for raw_asset, raw_amount in totals.items():
             amount = float(raw_amount or 0)
@@ -52,7 +54,13 @@ class KrakenBalanceValuator:
                 positions[asset] = positions.get(asset, 0.0) + amount
                 continue
 
-            value = self._value_asset_usd(asset, amount)
+            try:
+                value = self._value_asset_usd(asset, amount)
+            except ValueError:
+                unpriced_positions[asset] = amount
+                positions[asset] = amount
+                continue
+
             positions_value += value
             positions[asset] = amount
 
@@ -61,6 +69,7 @@ class KrakenBalanceValuator:
             cash_value=cash_value,
             positions_value=positions_value,
             positions=positions,
+            unpriced_positions=unpriced_positions,
         )
 
     def _value_asset_usd(

@@ -268,6 +268,77 @@ class InvestmentLedger:
 
             return cursor.lastrowid
 
+    def record_audit_event(
+        self,
+        actor: str,
+        action: str,
+        detail: str,
+        source: str = "system",
+    ):
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO audit_log (
+                    actor,
+                    action,
+                    detail,
+                    source,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    actor,
+                    action,
+                    detail,
+                    source,
+                    self._now(),
+                ),
+            )
+
+            return cursor.lastrowid
+
+    def record_paper_live_comparison(
+        self,
+        symbol: str,
+        paper_action: str,
+        live_action: str,
+        paper_price: float,
+        live_price: float,
+        difference: float,
+        reason: str = "",
+    ):
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO paper_live_comparison (
+                    symbol,
+                    paper_action,
+                    live_action,
+                    paper_price,
+                    live_price,
+                    difference,
+                    reason,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    symbol,
+                    paper_action,
+                    live_action,
+                    float(paper_price),
+                    float(live_price),
+                    float(difference),
+                    reason,
+                    self._now(),
+                ),
+            )
+
+            return cursor.lastrowid
+
     def set_setting(
         self,
         key: str,
@@ -562,6 +633,45 @@ class InvestmentLedger:
                 (limit,),
             ).fetchall()
 
+    def audit_log(self, limit: int = 100):
+
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT
+                    actor,
+                    action,
+                    detail,
+                    source,
+                    created_at
+                FROM audit_log
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def paper_live_comparisons(self, limit: int = 100):
+
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT
+                    symbol,
+                    paper_action,
+                    live_action,
+                    paper_price,
+                    live_price,
+                    difference,
+                    reason,
+                    created_at
+                FROM paper_live_comparison
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
     def _add_transaction(
         self,
         transaction_type: str,
@@ -689,6 +799,33 @@ class InvestmentLedger:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS paper_live_comparison (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    paper_action TEXT NOT NULL,
+                    live_action TEXT NOT NULL,
+                    paper_price REAL NOT NULL,
+                    live_price REAL NOT NULL,
+                    difference REAL NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )

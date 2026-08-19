@@ -30,6 +30,7 @@ class ExecutionEngine:
             )
 
             self.position_manager.open_position(
+                "",
                 signal,
                 quantity,
             )
@@ -40,4 +41,7 @@ class ExecutionEngine:
 
                 return
 
-            self.position_manager.close_position(signal)
+            self.position_manager.close_position(
+                "",
+                signal,
+            )

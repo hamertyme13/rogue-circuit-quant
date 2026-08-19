@@ -11,6 +11,27 @@ KRAKEN_API_KEY = os.getenv("KRAKEN_API_KEY", "")
 
 KRAKEN_API_SECRET = os.getenv("KRAKEN_API_SECRET", "")
 
+APP_AUTH_TOKEN = os.getenv("ROGUE_QUANT_AUTH_TOKEN", "")
+
+APP_DEPLOYMENT_MODE = os.getenv(
+    "ROGUE_QUANT_MODE",
+    "local",
+)
+
+CREDENTIAL_VAULT_PATH = Path("data/credential_vault.json")
+
+CREDENTIAL_VAULT_KEY_PATH = Path("data/credential_vault.key")
+
+NOTIFICATION_WEBHOOK_URL = os.getenv(
+    "ROGUE_QUANT_WEBHOOK_URL",
+    "",
+)
+
+NOTIFICATION_EMAIL_TO = os.getenv(
+    "ROGUE_QUANT_EMAIL_TO",
+    "",
+)
+
 # ==========================
 # Risk Controls
 # ==========================
@@ -33,11 +54,60 @@ MAX_ORDER_NOTIONAL = 250
 
 MIN_SIGNAL_CONFIDENCE = 0.70
 
+PAPER_VALIDATION_MIN_CYCLES = int(
+    os.getenv("ROGUE_QUANT_PAPER_VALIDATION_MIN_CYCLES", "100")
+)
+
+PAPER_VALIDATION_MIN_CLOSED_TRADES = int(
+    os.getenv("ROGUE_QUANT_PAPER_VALIDATION_MIN_CLOSED_TRADES", "10")
+)
+
+PAPER_VALIDATION_MAX_DRAWDOWN = float(
+    os.getenv("ROGUE_QUANT_PAPER_VALIDATION_MAX_DRAWDOWN", str(MAX_DRAWDOWN))
+)
+
+PAPER_VALIDATION_MIN_GROWTH = float(
+    os.getenv("ROGUE_QUANT_PAPER_VALIDATION_MIN_GROWTH", "0")
+)
+
+PAPER_VALIDATION_MIN_OPPORTUNITY_RATE = float(
+    os.getenv("ROGUE_QUANT_PAPER_VALIDATION_MIN_OPPORTUNITY_RATE", "0.05")
+)
+
+OPPORTUNITY_MIN_CONFIDENCE = float(
+    os.getenv(
+        "ROGUE_QUANT_OPPORTUNITY_MIN_CONFIDENCE",
+        str(MIN_SIGNAL_CONFIDENCE),
+    )
+)
+
+OPPORTUNITY_MIN_WIN_RATE = float(
+    os.getenv("ROGUE_QUANT_OPPORTUNITY_MIN_WIN_RATE", "0.55")
+)
+
+OPPORTUNITY_MIN_NET_PROFIT = float(
+    os.getenv("ROGUE_QUANT_OPPORTUNITY_MIN_NET_PROFIT", "0")
+)
+
 # ==========================
 # Automated Trading
 # ==========================
 
-LIVE_SYMBOLS = ["BTC/USD"]
+LIVE_SYMBOLS = [
+    symbol.strip()
+    for symbol in os.getenv(
+        "ROGUE_QUANT_LIVE_SYMBOLS",
+        "BTC/USD",
+    ).split(",")
+    if symbol.strip()
+]
+
+TARGET_ASSET = os.getenv("ROGUE_QUANT_TARGET_ASSET", "QUID")
+
+TARGET_SYMBOL = os.getenv(
+    "ROGUE_QUANT_TARGET_SYMBOL",
+    f"{TARGET_ASSET}/USD",
+)
 
 LIVE_TIMEFRAME = "5m"
 

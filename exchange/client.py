@@ -11,21 +11,53 @@ from config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
 class KrakenClient:
 
-    def __init__(self):
+    def __init__(
+        self,
+        api_key: str = "",
+        api_secret: str = "",
+    ):
 
         options = {
             "enableRateLimit": True,
         }
 
-        if KRAKEN_API_KEY and KRAKEN_API_SECRET:
-            options["apiKey"] = KRAKEN_API_KEY
-            options["secret"] = KRAKEN_API_SECRET
+        key = api_key or KRAKEN_API_KEY
+        secret = api_secret or KRAKEN_API_SECRET
+
+        if key and secret:
+            options["apiKey"] = key
+            options["secret"] = secret
 
         self.exchange = ccxt.kraken(options)
+        self.has_credentials = bool(key and secret)
+
+    @classmethod
+    def from_credentials(cls, credentials: dict[str, str] | None):
+
+        if not credentials:
+            return cls()
+
+        return cls(
+            api_key=credentials.get("api_key", ""),
+            api_secret=credentials.get("api_secret", ""),
+        )
 
     def load_markets(self):
         """Load all available Kraken markets."""
         return self.exchange.load_markets()
+
+    def has_market(self, symbol: str) -> bool:
+        """Return whether Kraken exposes a tradable market."""
+        return symbol in self.load_markets()
+
+    def market(self, symbol: str) -> dict:
+        """Return Kraken market metadata for a symbol."""
+        markets = self.load_markets()
+
+        if symbol not in markets:
+            raise ValueError(f"{symbol} is not available on Kraken.")
+
+        return markets[symbol]
 
     def fetch_ohlcv(
         self,
@@ -46,6 +78,10 @@ class KrakenClient:
     ):
         """Get current ticker."""
         return self.exchange.fetch_ticker(symbol)
+
+    def fetch_tickers(self, symbols=None):
+        """Get tickers used to rank a bounded market scan."""
+        return self.exchange.fetch_tickers(symbols)
 
     def fetch_balance(self):
         """Will be used later after API keys are added."""

@@ -24,9 +24,7 @@ def main():
 
     console.print("[bold green]Best Training Strategy[/bold green]")
 
-    ReportTables.training_result(best)
-
-    ReportTables.validation_result(metrics)
+    ReportTables.comparison(best, metrics)
 
     verdict = VerdictEngine().evaluate(metrics)
 
