@@ -9,15 +9,18 @@ from ai.strategy_analysis import StrategyAnalyst, StrategyDecision
 from config import (
     ALLOW_LIVE_TRADING,
     LIVE_CANDLE_LIMIT,
+    LIVE_CASH_RESERVE_RATE,
     LIVE_LOOP_SECONDS,
+    LIVE_SLIPPAGE_RATE,
     LIVE_SYMBOLS,
+    LIVE_TAKER_FEE_RATE,
     LIVE_TIMEFRAME,
     MAX_ORDER_NOTIONAL,
     MIN_SIGNAL_CONFIDENCE,
     OPPORTUNITY_MIN_CONFIDENCE,
     OPPORTUNITY_MIN_NET_PROFIT,
     OPPORTUNITY_MIN_WIN_RATE,
-    PAPER_TRADING,
+    EXECUTION_MODE,
     REOPTIMIZE_EVERY_CYCLES,
     STARTING_BALANCE,
 )
@@ -29,6 +32,13 @@ from risk.kill_switch import KillSwitch
 from risk.position_manager import PositionManager
 from risk.position_size import PositionSizer
 from risk.risk_manager import RiskManager
+from live.execution_safety import (
+    EXECUTION_MODES,
+    LIMITED_LIVE,
+    PAPER,
+    SHADOW,
+    LiveExecutionSafety,
+)
 
 
 @dataclass
@@ -105,13 +115,20 @@ class AutomatedKrakenTrader:
         self.min_signal_confidence = MIN_SIGNAL_CONFIDENCE
         self.loop_seconds = LIVE_LOOP_SECONDS
         self.symbols = list(LIVE_SYMBOLS)
+        self.execution_mode = (
+            EXECUTION_MODE if EXECUTION_MODE in EXECUTION_MODES else PAPER
+        )
+        self.execution_safety = LiveExecutionSafety(
+            taker_fee_rate=LIVE_TAKER_FEE_RATE,
+            slippage_rate=LIVE_SLIPPAGE_RATE,
+            reserve_rate=LIVE_CASH_RESERVE_RATE,
+        )
+        self.last_order_previews = {}
 
     def run_forever(self):
 
         self.console.print(
-            "[bold yellow]PAPER[/bold yellow]"
-            if PAPER_TRADING
-            else "[bold red]LIVE[/bold red]"
+            f"[bold yellow]{self.execution_mode.upper()}[/bold yellow]"
         )
 
         while True:
@@ -231,7 +248,14 @@ class AutomatedKrakenTrader:
     @property
     def mode(self) -> str:
 
-        return "paper" if PAPER_TRADING else "live"
+        return self.execution_mode
+
+    def set_execution_mode(self, mode: str):
+
+        normalized = str(mode or "").lower()
+        if normalized not in EXECUTION_MODES:
+            raise ValueError(f"Unsupported execution mode: {mode}")
+        self.execution_mode = normalized
 
     def emergency_stop(self):
 
@@ -345,7 +369,7 @@ class AutomatedKrakenTrader:
             self.max_order_notional / signal.price,
         )
 
-        if PAPER_TRADING:
+        if self.mode == PAPER:
             self.positions.open_position(
                 symbol,
                 signal,
@@ -368,7 +392,59 @@ class AutomatedKrakenTrader:
                 opportunity_reason=self._opportunity_reason(symbol),
             )
 
-        order = self._place_live_order(symbol, "buy", quantity)
+        preview = self.execution_safety.preview(
+            self.client,
+            symbol,
+            "buy",
+            quantity,
+            signal.price,
+        )
+        self.last_order_previews[symbol] = preview.as_dict()
+
+        if not preview.valid:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                reason="Order preview blocked: " + " ".join(preview.reasons),
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        if self.mode == SHADOW:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                order_status="validated",
+                reason=(
+                    f"Shadow BUY validated; no Kraken order sent. "
+                    f"Estimated fee={preview.estimated_fee:.8f} "
+                    f"{preview.balance_asset}, slippage="
+                    f"{preview.estimated_slippage:.8f}."
+                ),
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        order = self._place_live_order(
+            symbol,
+            "buy",
+            preview.quantity,
+            preview.client_order_id,
+        )
         order_id = self._order_id(order)
         order_status = self._order_status(order)
         filled_quantity = self._filled_quantity(order)
@@ -433,7 +509,7 @@ class AutomatedKrakenTrader:
         open_trade = self.portfolio.open_position_for(symbol)
         quantity = open_trade.quantity
 
-        if PAPER_TRADING:
+        if self.mode == PAPER:
             self.positions.close_position(
                 symbol,
                 signal,
@@ -453,7 +529,50 @@ class AutomatedKrakenTrader:
                 mode=self.mode,
             )
 
-        order = self._place_live_order(symbol, "sell", quantity)
+        preview = self.execution_safety.preview(
+            self.client,
+            symbol,
+            "sell",
+            quantity,
+            signal.price,
+        )
+        self.last_order_previews[symbol] = preview.as_dict()
+
+        if not preview.valid:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                reason="Order preview blocked: " + " ".join(preview.reasons),
+                mode=self.mode,
+            )
+
+        if self.mode == SHADOW:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                order_status="validated",
+                reason="Shadow SELL validated; no Kraken order sent.",
+                mode=self.mode,
+            )
+
+        order = self._place_live_order(
+            symbol,
+            "sell",
+            preview.quantity,
+            preview.client_order_id,
+        )
         order_id = self._order_id(order)
         order_status = self._order_status(order)
         filled_quantity = self._filled_quantity(order)
@@ -497,9 +616,10 @@ class AutomatedKrakenTrader:
         symbol: str,
         side: str,
         quantity: float,
+        client_order_id: str,
     ):
 
-        if not ALLOW_LIVE_TRADING:
+        if self.mode != LIMITED_LIVE or not ALLOW_LIVE_TRADING:
             raise RuntimeError(
                 "Live order blocked. Set ALLOW_LIVE_TRADING=True "
                 "only after validating paper trading."
@@ -509,7 +629,13 @@ class AutomatedKrakenTrader:
             symbol,
             side,
             quantity,
+            client_order_id=client_order_id,
         )
+
+        order_id = self._order_id(order)
+        status = self._order_status(order)
+        if order_id and status not in {"closed", "filled"}:
+            order = self.client.fetch_order(order_id, symbol)
 
         self.console.print(order)
 

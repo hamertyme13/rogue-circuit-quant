@@ -11,6 +11,7 @@ from accounting.ledger import InvestmentLedger
 from accounting.valuation import KrakenBalanceValuator
 from analytics.chart_data import ChartDataBuilder
 from config import (
+    ALLOW_LIVE_TRADING,
     APP_AUTH_TOKEN,
     APP_DEPLOYMENT_MODE,
     CREDENTIAL_VAULT_KEY_PATH,
@@ -26,17 +27,34 @@ from config import (
     PAPER_VALIDATION_MIN_CYCLES,
     PAPER_VALIDATION_MIN_GROWTH,
     PAPER_VALIDATION_MIN_OPPORTUNITY_RATE,
+    SHADOW_VALIDATION_MAX_COST_RATE,
+    SHADOW_VALIDATION_MIN_AVERAGE_RETURN,
+    SHADOW_VALIDATION_MIN_PROFITABLE_RATE,
+    SHADOW_VALIDATION_MIN_SAMPLES,
+    SHADOW_VALIDATION_MIN_VALID_RATE,
     PORTFOLIO_ALERT_PERCENT,
     TARGET_ASSET,
     TARGET_SYMBOL,
 )
 from exchange.client import KrakenClient
 from live.bot_service import TradingBotService
+from live.daily_scheduler import DailyPaperScheduler
+from live.market_selection import DiversifiedMarketSelector
 from live.paper_validation import (
     PaperTradingValidator,
     PaperValidationConfig,
 )
+from live.shadow_validation import (
+    ShadowTradingValidator,
+    ShadowValidationConfig,
+)
 from live.trader import AutomatedKrakenTrader
+from live.execution_safety import (
+    EXECUTION_MODES,
+    LIMITED_LIVE,
+    PAPER,
+    SHADOW,
+)
 from notifications.channels import NotificationRouter
 from security.auth import TokenAuth
 from security.credentials import CredentialVault
@@ -45,6 +63,7 @@ from security.deployment import resolve_mode
 
 ROOT = Path(__file__).resolve().parent
 WEB_ROOT = ROOT / "web"
+REAL_ACCOUNT_SOURCES = ("kraken",)
 
 
 class WebCommandCenter:
@@ -57,6 +76,7 @@ class WebCommandCenter:
     ):
 
         self.lock = RLock()
+        self.trading_lock = RLock()
         self.ledger = InvestmentLedger(ledger_path)
         self.auth = TokenAuth(APP_AUTH_TOKEN)
         self.deployment_mode = resolve_mode(APP_DEPLOYMENT_MODE)
@@ -72,6 +92,15 @@ class WebCommandCenter:
         self._notified_opportunities = set()
         self._last_target_asset_status = None
         self.market_opportunities = []
+        self.market_selector = DiversifiedMarketSelector()
+        self.kraken_permission_status = {
+            "checked": False,
+            "safe_for_live": False,
+            "permissions": [],
+            "missing": [],
+            "forbidden": [],
+            "message": "Run Test Connection to inspect API permissions.",
+        }
         self.client = self._build_kraken_client()
         self.valuator = KrakenBalanceValuator(self.client)
         self.trader = AutomatedKrakenTrader(
@@ -89,6 +118,15 @@ class WebCommandCenter:
                 ),
             )
         )
+        self.shadow_validator = ShadowTradingValidator(
+            ShadowValidationConfig(
+                min_samples=SHADOW_VALIDATION_MIN_SAMPLES,
+                min_valid_rate=SHADOW_VALIDATION_MIN_VALID_RATE,
+                min_profitable_rate=SHADOW_VALIDATION_MIN_PROFITABLE_RATE,
+                max_cost_rate=SHADOW_VALIDATION_MAX_COST_RATE,
+                min_average_net_return=SHADOW_VALIDATION_MIN_AVERAGE_RETURN,
+            )
+        )
         self._load_controls()
         self.service = TradingBotService(
             cycle_runner=self.run_one_cycle,
@@ -97,11 +135,18 @@ class WebCommandCenter:
             on_error=self._service_error,
             on_stop=self._service_stopped,
         )
+        self.daily_scheduler = DailyPaperScheduler(
+            run_session=self._start_daily_paper_session,
+            settings_loader=self._daily_schedule_settings,
+        )
+        self.daily_scheduler.start()
 
     def state(self):
 
         with self.lock:
-            summary = asdict(self.ledger.summary())
+            summary = asdict(self.ledger.summary(
+                snapshot_sources=REAL_ACCOUNT_SOURCES,
+            ))
             controls = asdict(
                 self.ledger.bot_controls(
                     max_order_notional=self.trader.max_order_notional,
@@ -122,7 +167,15 @@ class WebCommandCenter:
                     "emergency_stop": self.trader.kill_switch.active(),
                     "symbols": self.trader.symbols,
                 },
+                "daily_schedule": self.daily_scheduler.status(),
                 "market_opportunities": self.market_opportunities,
+                "execution_safety": {
+                    "mode": self.trader.mode,
+                    "available_modes": sorted(EXECUTION_MODES),
+                    "live_orders_enabled": ALLOW_LIVE_TRADING,
+                    "permissions": self.kraken_permission_status,
+                    "order_previews": self.trader.last_order_previews,
+                },
                 "auth": self.auth.status(),
                 "deployment_mode": asdict(self.deployment_mode),
                 "credential_status": self.credential_vault.status(),
@@ -131,10 +184,15 @@ class WebCommandCenter:
                 "notification_channels": (
                     self.notifications.configured_channels()
                 ),
-                "chart_data": self.chart_builder.build(self.ledger),
+                "chart_data": self.chart_builder.build(
+                    self.ledger,
+                    snapshot_sources=REAL_ACCOUNT_SOURCES,
+                ),
                 "snapshots": [
                     asdict(snapshot)
-                    for snapshot in self.ledger.snapshots()
+                    for snapshot in self.ledger.snapshots(
+                        sources=REAL_ACCOUNT_SOURCES,
+                    )
                 ],
                 "transactions": [
                     self._row_dict(row)
@@ -163,6 +221,10 @@ class WebCommandCenter:
                 "paper_live": [
                     self._row_dict(row)
                     for row in self.ledger.paper_live_comparisons()
+                ],
+                "shadow_observations": [
+                    self._row_dict(row)
+                    for row in self.ledger.shadow_observations(limit=100)
                 ],
             }
 
@@ -248,6 +310,11 @@ class WebCommandCenter:
 
         with self.lock:
             status = self.target_asset_status(refresh=True)
+            self.kraken_permission_status = (
+                self.trader.execution_safety
+                .inspect_permissions(self.client)
+                .as_dict()
+            )
             self._last_target_asset_status = status
             level = "INFO" if status["ready_for_paper"] else "WARN"
             self.ledger.add_alert(
@@ -263,6 +330,47 @@ class WebCommandCenter:
 
         state = self.state()
         state["message"] = status["message"]
+        return state
+
+    def set_execution_mode(self, payload):
+
+        self._assert_writable()
+        requested = str(payload.get("mode", "")).lower()
+
+        if requested not in EXECUTION_MODES:
+            raise ValueError("Choose paper, shadow, or limited live mode.")
+
+        if requested in {SHADOW, LIMITED_LIVE}:
+            if not self.credential_vault.status()["kraken_configured"]:
+                raise RuntimeError(
+                    "Kraken credentials are required for this mode."
+                )
+
+        if requested == LIMITED_LIVE:
+            confirmation = str(payload.get("confirmation", ""))
+            readiness = self.live_readiness()
+            if confirmation != "ENABLE LIMITED LIVE":
+                raise RuntimeError(
+                    "Limited live mode requires the exact confirmation phrase."
+                )
+            if not readiness["ready"]:
+                raise RuntimeError(
+                    "Limited live mode is locked: "
+                    + " ".join(readiness["reasons"])
+                )
+
+        self.service.stop(wait=True)
+        with self.lock:
+            self.trader.set_execution_mode(requested)
+            self.ledger.set_setting("execution_mode", requested)
+            self._audit(
+                "execution_mode_changed",
+                f"Execution mode changed to {requested}.",
+                source="execution_safety",
+            )
+
+        state = self.state()
+        state["message"] = f"Execution mode set to {requested}."
         return state
 
     def use_target_symbol(self):
@@ -326,36 +434,10 @@ class WebCommandCenter:
         if not 1 <= active_limit <= 5:
             raise ValueError("Active market limit must be between 1 and 5.")
 
-        candidates = self._market_scan_candidates(scan_limit)
-        opportunities = self.trader.scan_markets(candidates)
-
-        if not opportunities:
-            raise RuntimeError(
-                "No Kraken markets produced enough data for analysis."
-            )
-
-        selected = [item.symbol for item in opportunities[:active_limit]]
-
-        with self.lock:
-            self.market_opportunities = [
-                asdict(item)
-                for item in opportunities
-            ]
-            self.trader.symbols = selected
-            self.ledger.set_setting("live_symbols", ",".join(selected))
-            self.ledger.add_alert(
-                "INFO",
-                f"Paper bot market set updated: {', '.join(selected)}.",
-                "market_scanner",
-            )
-            self._audit(
-                "market_scan_completed",
-                (
-                    f"Analyzed {len(opportunities)} market(s); "
-                    f"selected {', '.join(selected)} for paper trading."
-                ),
-                source="market_scanner",
-            )
+        opportunities, selected = self._perform_market_scan(
+            scan_limit,
+            active_limit,
+        )
 
         state = self.state()
         state["message"] = (
@@ -414,30 +496,179 @@ class WebCommandCenter:
 
         return self.state()
 
+    def apply_daily_schedule(self, payload):
+        self._assert_writable()
+        enabled = bool(payload.get("enabled"))
+        schedule_time = str(payload.get("time", "09:00")).strip()
+        cycles = int(payload.get("cycles", 12))
+        auto_scan = bool(payload.get("auto_scan", True))
+        scan_limit = int(payload.get("scan_limit", 8))
+        active_limit = int(payload.get("active_limit", 3))
+
+        try:
+            hour, minute = (int(value) for value in schedule_time.split(":"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Choose a valid daily start time.") from exc
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("Choose a valid daily start time.")
+        if not 1 <= cycles <= 288:
+            raise ValueError("Daily cycles must be between 1 and 288.")
+        if not 2 <= scan_limit <= 12:
+            raise ValueError("Scan limit must be between 2 and 12.")
+        if not 1 <= active_limit <= 5 or active_limit > scan_limit:
+            raise ValueError("Active markets must be between 1 and 5.")
+
+        normalized_time = f"{hour:02d}:{minute:02d}"
+        with self.lock:
+            self.ledger.set_setting("daily_paper_enabled", int(enabled))
+            self.ledger.set_setting("daily_paper_time", normalized_time)
+            self.ledger.set_setting("daily_paper_cycles", cycles)
+            self.ledger.set_setting("daily_paper_auto_scan", int(auto_scan))
+            self.ledger.set_setting("daily_paper_scan_limit", scan_limit)
+            self.ledger.set_setting("daily_paper_active_limit", active_limit)
+            self._audit(
+                "daily_paper_schedule_updated",
+                f"enabled={enabled}, time={normalized_time}, cycles={cycles}, "
+                f"auto_scan={auto_scan}, markets={active_limit}",
+                source="daily_scheduler",
+            )
+
+        state = self.state()
+        state["message"] = (
+            f"Daily paper session scheduled for {normalized_time}."
+            if enabled
+            else "Daily paper schedule disabled."
+        )
+        return state
+
+    def _daily_schedule_settings(self):
+        return {
+            "enabled": self.ledger.get_setting(
+                "daily_paper_enabled", "0"
+            ) == "1",
+            "time": self.ledger.get_setting("daily_paper_time", "09:00"),
+            "cycles": int(self.ledger.get_setting("daily_paper_cycles", "12")),
+            "auto_scan": self.ledger.get_setting(
+                "daily_paper_auto_scan", "1"
+            ) == "1",
+            "scan_limit": int(self.ledger.get_setting(
+                "daily_paper_scan_limit", "8"
+            )),
+            "active_limit": int(self.ledger.get_setting(
+                "daily_paper_active_limit", "3"
+            )),
+            "last_run_date": self.ledger.get_setting(
+                "daily_paper_last_run_date", ""
+            ),
+        }
+
+    def _start_daily_paper_session(self, cycles: int, run_date: str):
+        settings = self._daily_schedule_settings()
+        scan_message = ""
+        if settings["auto_scan"]:
+            try:
+                _, selected = self._perform_market_scan(
+                    settings["scan_limit"],
+                    settings["active_limit"],
+                )
+                scan_message = f" Selected {', '.join(selected)}."
+            except Exception as exc:
+                scan_message = f" Market refresh failed: {exc}"
+
+        with self.lock:
+            if self.trader.kill_switch.active():
+                result = "Skipped because the emergency stop is active."
+            elif self.service.is_running():
+                result = "Skipped because a bot session is already running."
+            else:
+                self.trader.set_execution_mode(PAPER)
+                self.ledger.set_setting("execution_mode", PAPER)
+                started = self.service.start(max_cycles=cycles)
+                result = (
+                    f"Started a bounded paper session for {cycles} cycles."
+                    f"{scan_message}"
+                    if started
+                    else "Skipped because a bot session is already running."
+                )
+            self.ledger.set_setting("daily_paper_last_run_date", run_date)
+            self._audit(
+                "daily_paper_session",
+                result,
+                source="daily_scheduler",
+                actor="scheduler",
+            )
+            return result
+
+    def _perform_market_scan(self, scan_limit: int, active_limit: int):
+        candidates = self._market_scan_candidates(scan_limit)
+        with self.trading_lock:
+            opportunities = self.trader.scan_markets(candidates)
+        if not opportunities:
+            raise RuntimeError(
+                "No Kraken markets produced enough data for analysis."
+            )
+        selection = self.market_selector.select(opportunities, active_limit)
+        selected = list(selection.selected)
+        if not selected:
+            raise RuntimeError(
+                "No crypto market passed the profitability and quality filters."
+            )
+
+        with self.lock:
+            self.market_opportunities = [asdict(item) for item in opportunities]
+            self.trader.symbols = selected
+            self.ledger.set_setting("live_symbols", ",".join(selected))
+            self.ledger.add_alert(
+                "INFO",
+                f"Paper bot market set updated: {', '.join(selected)}.",
+                "market_scanner",
+            )
+            self._audit(
+                "market_scan_completed",
+                f"Analyzed {len(opportunities)} market(s); selected "
+                f"{', '.join(selected)} for paper trading.",
+                source="market_scanner",
+            )
+        return opportunities, selected
+
     def run_one_cycle(self):
 
         self._assert_writable()
         self._assert_trading_allowed()
 
-        with self.lock:
+        # Market downloads and optimization can be slow. Keep them outside the
+        # dashboard lock so status, stop, and emergency controls stay responsive.
+        with self.trading_lock:
             events = self.trader.run_once()
+
+        with self.lock:
             self.paper_events.extend(events)
-            portfolio_value = self.trader.portfolio.account_value()
-            position_value = self.trader.portfolio.position_value()
-            cash_value = self.trader.portfolio.cash
+            if self.trader.mode == LIMITED_LIVE:
+                valuation = self.valuator.snapshot()
+                portfolio_value = valuation.total_value
+                position_value = valuation.positions_value
+                cash_value = valuation.cash_value
+                snapshot_source = "kraken"
+            else:
+                portfolio_value = self.trader.portfolio.account_value()
+                position_value = self.trader.portfolio.position_value()
+                cash_value = self.trader.portfolio.cash
+                snapshot_source = f"browser_{self.trader.mode}_trader"
 
             self.ledger.record_snapshot(
                 total_value=portfolio_value,
                 cash_value=cash_value,
                 positions_value=position_value,
-                source="browser_paper_trader",
+                source=snapshot_source,
             )
-            self._record_value_alerts(
-                portfolio_value,
-                "browser_paper_trader",
-            )
+            self._record_value_alerts(portfolio_value, snapshot_source)
 
             for event in events:
+                if self.trader.mode == SHADOW and event.price > 0:
+                    self.ledger.resolve_shadow_observations(
+                        event.symbol,
+                        event.price,
+                    )
                 self.ledger.record_decision(
                     symbol=event.symbol,
                     strategy=event.strategy,
@@ -450,12 +681,12 @@ class WebCommandCenter:
                     order_id=event.order_id,
                     mode=event.mode,
                 )
-                live_action = (
-                    event.action
-                    if event.executed
-                    and self.deployment_mode.live_trading_allowed
-                    else "LOCKED"
-                )
+                if self.trader.mode == LIMITED_LIVE and event.executed:
+                    live_action = event.action
+                elif self.trader.mode == SHADOW:
+                    live_action = "SHADOW"
+                else:
+                    live_action = "LOCKED"
                 self.ledger.record_paper_live_comparison(
                     symbol=event.symbol,
                     paper_action=event.action,
@@ -465,6 +696,28 @@ class WebCommandCenter:
                     difference=0.0,
                     reason=event.reason,
                 )
+
+                if self.trader.mode == SHADOW and event.opportunity:
+                    preview = self.trader.last_order_previews.get(
+                        event.symbol,
+                        {},
+                    )
+                    notional = float(preview.get("notional") or 0.0)
+                    costs = (
+                        float(preview.get("estimated_fee") or 0.0)
+                        + float(preview.get("estimated_slippage") or 0.0)
+                    )
+                    self.ledger.record_shadow_observation(
+                        symbol=event.symbol,
+                        action=event.action,
+                        strategy=event.strategy,
+                        confidence=event.confidence,
+                        entry_price=event.price,
+                        quantity=event.quantity,
+                        valid=bool(preview.get("valid")),
+                        cost_rate=costs / notional if notional else 0.0,
+                        reason=event.reason,
+                    )
 
                 if event.executed:
                     self.ledger.add_alert(
@@ -532,7 +785,11 @@ class WebCommandCenter:
             events=self.paper_events,
             cycles=self.trader.cycles,
         )
+        shadow_validation = self.shadow_validator.evaluate(
+            self.ledger.shadow_observations()
+        )
         reasons = list(validation.reasons)
+        reasons.extend(shadow_validation.reasons)
         credentials_configured = self.credential_vault.status()[
             "kraken_configured"
         ]
@@ -547,6 +804,13 @@ class WebCommandCenter:
         if not self.deployment_mode.live_trading_allowed:
             reasons.append("Deployment mode does not allow live trading.")
 
+        permissions_safe = self.kraken_permission_status["safe_for_live"]
+        if not permissions_safe:
+            reasons.append(self.kraken_permission_status["message"])
+
+        if not ALLOW_LIVE_TRADING:
+            reasons.append("Live order submission is disabled by configuration.")
+
         if not emergency_stop_clear:
             reasons.append("Emergency stop is active.")
 
@@ -559,9 +823,12 @@ class WebCommandCenter:
                 self.deployment_mode.live_trading_allowed
             ),
             "credentials_configured": credentials_configured,
+            "permissions_safe": permissions_safe,
+            "live_orders_enabled": ALLOW_LIVE_TRADING,
             "target_ready_for_paper": target_asset["ready_for_paper"],
             "emergency_stop_clear": emergency_stop_clear,
             "paper_validation": asdict(validation),
+            "shadow_validation": asdict(shadow_validation),
             "reasons": reasons,
             "message": (
                 "Live deployment gates are satisfied."
@@ -626,6 +893,19 @@ class WebCommandCenter:
         self._assert_writable()
         self.service.stop()
 
+        canceled_orders = False
+        if self.trader.mode == LIMITED_LIVE:
+            try:
+                self.client.cancel_all_orders()
+                canceled_orders = True
+            except Exception as exc:
+                with self.lock:
+                    self.ledger.add_alert(
+                        "ERROR",
+                        f"Emergency order cancellation failed: {exc}",
+                        "execution_safety",
+                    )
+
         with self.lock:
             self.trader.emergency_stop()
             self.ledger.set_emergency_stop(True)
@@ -641,7 +921,10 @@ class WebCommandCenter:
             )
             self._audit(
                 "emergency_stop",
-                "Trading stopped by browser command center.",
+                (
+                    "Trading stopped by browser command center. "
+                    f"Kraken orders canceled={canceled_orders}."
+                ),
             )
 
         return self.state()
@@ -676,6 +959,14 @@ class WebCommandCenter:
                 api_secret,
             )
             self._reload_kraken_client()
+            self.kraken_permission_status = {
+                "checked": False,
+                "safe_for_live": False,
+                "permissions": [],
+                "missing": [],
+                "forbidden": [],
+                "message": "Run Test Connection to inspect API permissions.",
+            }
             self.ledger.add_alert(
                 "INFO",
                 "Encrypted Kraken credentials updated.",
@@ -821,6 +1112,10 @@ class WebCommandCenter:
                 if symbol.strip()
             ]
 
+        execution_mode = self.ledger.get_setting("execution_mode", PAPER)
+        if execution_mode in EXECUTION_MODES:
+            self.trader.set_execution_mode(execution_mode)
+
     def _market_scan_candidates(self, limit: int) -> list[str]:
 
         markets = self.client.load_markets()
@@ -928,7 +1223,10 @@ class WebCommandCenter:
         source: str,
     ):
 
-        snapshots = self.ledger.snapshots(limit=2)
+        snapshots = self.ledger.snapshots(
+            limit=2,
+            sources=(source,),
+        )
 
         if len(snapshots) < 2:
             return
@@ -1104,7 +1402,7 @@ APP_STATE = WebCommandCenter()
 
 class RogueCircuitRequestHandler(BaseHTTPRequestHandler):
 
-    server_version = "RogueCircuitQuant/1.0"
+    server_version = "CircuitAlpha/1.0"
 
     def do_GET(self):
 
@@ -1155,6 +1453,8 @@ class RogueCircuitRequestHandler(BaseHTTPRequestHandler):
                 data = APP_STATE.record_kraken_snapshot()
             elif parsed.path == "/api/settings":
                 data = APP_STATE.apply_settings(payload)
+            elif parsed.path == "/api/schedule/daily-paper":
+                data = APP_STATE.apply_daily_schedule(payload)
             elif parsed.path == "/api/credentials/kraken":
                 data = APP_STATE.store_credentials(payload)
             elif parsed.path == "/api/kraken/check":
@@ -1165,6 +1465,8 @@ class RogueCircuitRequestHandler(BaseHTTPRequestHandler):
                 data = APP_STATE.scan_market_opportunities(payload)
             elif parsed.path == "/api/trading/run-once":
                 data = APP_STATE.run_one_cycle_response()
+            elif parsed.path == "/api/trading/mode":
+                data = APP_STATE.set_execution_mode(payload)
             elif parsed.path == "/api/bot/start":
                 data = APP_STATE.start_service()
             elif parsed.path == "/api/bot/stop":
@@ -1283,7 +1585,7 @@ def run(host="127.0.0.1", port=8765):
         (host, port),
         RogueCircuitRequestHandler,
     )
-    print(f"Rogue Circuit Quant browser app: http://{host}:{port}")
+    print(f"Circuit Alpha browser app: http://{host}:{port}")
     server.serve_forever()
 
 

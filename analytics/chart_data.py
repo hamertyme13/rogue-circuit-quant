@@ -3,10 +3,10 @@ from __future__ import annotations
 
 class ChartDataBuilder:
 
-    def build(self, ledger):
+    def build(self, ledger, snapshot_sources=None):
 
-        snapshots = ledger.snapshots()
-        summary = ledger.summary()
+        snapshots = ledger.snapshots(sources=snapshot_sources)
+        summary = ledger.summary(snapshot_sources=snapshot_sources)
 
         equity_curve = [
             {

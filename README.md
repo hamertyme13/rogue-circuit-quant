@@ -1,4 +1,4 @@
-# Rogue Circuit Quant
+# Circuit Alpha
 
 An AI-powered quantitative cryptocurrency trading platform.
 
@@ -90,7 +90,7 @@ Install or refresh the macOS Desktop launcher:
 python3 scripts/install_macos_launcher.py --target ~/Desktop
 ```
 
-This creates `Rogue Circuit Quant.app` with a custom Rogue Circuit icon. Opening
+This creates `Circuit Alpha.app` with a custom Rogue Circuit icon. Opening
 the app starts the local browser command center and launches it in your browser.
 
 The browser app uses the same SQLite ledger, Kraken valuation logic, bot
@@ -127,6 +127,16 @@ Useful environment variables:
 - `ROGUE_QUANT_OPPORTUNITY_MIN_CONFIDENCE`: BUY signal confidence threshold
 - `ROGUE_QUANT_OPPORTUNITY_MIN_WIN_RATE`: backtested win-rate threshold
 - `ROGUE_QUANT_OPPORTUNITY_MIN_NET_PROFIT`: backtested profit threshold
+- `ROGUE_QUANT_EXECUTION_MODE`: `paper`, `shadow`, or `limited_live`
+- `ROGUE_QUANT_SHADOW_VALIDATION_MIN_SAMPLES`: resolved shadow proposals required before limited live (default `25`)
+- `ROGUE_QUANT_SHADOW_VALIDATION_MIN_VALID_RATE`: minimum Kraken-valid preview rate (default `0.90`)
+- `ROGUE_QUANT_SHADOW_VALIDATION_MIN_PROFITABLE_RATE`: minimum profitable-after-cost outcome rate (default `0.50`)
+- `ROGUE_QUANT_SHADOW_VALIDATION_MAX_COST_RATE`: maximum average estimated fee and slippage rate (default `0.02`)
+- `ROGUE_QUANT_SHADOW_VALIDATION_MIN_AVERAGE_RETURN`: minimum average shadow return after estimated costs (default `0`)
+- `ROGUE_QUANT_ALLOW_LIVE_TRADING`: explicit live-order unlock; defaults false
+- `ROGUE_QUANT_LIVE_TAKER_FEE_RATE`: fee estimate used by order previews
+- `ROGUE_QUANT_LIVE_SLIPPAGE_RATE`: slippage reserve used by order previews
+- `ROGUE_QUANT_LIVE_CASH_RESERVE_RATE`: cash buffer retained around live buys
 
 Opportunity alerts mean a symbol passed the configured signal and backtest
 filters. They are not profit guarantees.
@@ -139,3 +149,8 @@ market and balance checks pass.
 
 See `docs/website_integration.md` for the Rogue Circuit website connection plan.
 See `docs/ml_development_sequence.md` for the Sprint 10 ML roadmap.
+
+The macOS installer also registers a per-user background service. Circuit Alpha
+starts at login and remains available for bounded daily paper sessions even when
+its browser tab is closed. The schedule is configured in the Daily Paper Session
+panel and never submits live orders.

@@ -339,6 +339,62 @@ class InvestmentLedger:
 
             return cursor.lastrowid
 
+    def record_shadow_observation(
+        self,
+        symbol: str,
+        action: str,
+        strategy: str,
+        confidence: float,
+        entry_price: float,
+        quantity: float,
+        valid: bool,
+        cost_rate: float,
+        reason: str = "",
+    ):
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO shadow_observations (
+                    symbol, action, strategy, confidence, entry_price,
+                    quantity, valid, cost_rate, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    symbol, action.upper(), strategy, float(confidence),
+                    float(entry_price), float(quantity), int(valid),
+                    float(cost_rate), reason, self._now(),
+                ),
+            )
+            return cursor.lastrowid
+
+    def resolve_shadow_observations(self, symbol: str, current_price: float):
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, action, entry_price, cost_rate
+                FROM shadow_observations
+                WHERE symbol = ? AND resolved_at IS NULL
+                """,
+                (symbol,),
+            ).fetchall()
+            resolved_at = self._now()
+            for row in rows:
+                entry = float(row["entry_price"])
+                gross = (float(current_price) / entry - 1.0) if entry else 0.0
+                if row["action"] == "SELL":
+                    gross = -gross
+                net = gross - float(row["cost_rate"])
+                conn.execute(
+                    """
+                    UPDATE shadow_observations
+                    SET exit_price = ?, gross_return = ?, net_return = ?,
+                        resolved_at = ?
+                    WHERE id = ?
+                    """,
+                    (float(current_price), gross, net, resolved_at, row["id"]),
+                )
+            return len(rows)
+
     def set_setting(
         self,
         key: str,
@@ -426,12 +482,15 @@ class InvestmentLedger:
             ),
         )
 
-    def summary(self) -> LedgerSummary:
+    def summary(
+        self,
+        snapshot_sources: tuple[str, ...] | None = None,
+    ) -> LedgerSummary:
 
         deposits = self.total_transactions(DEPOSIT)
         withdrawals = self.total_transactions(WITHDRAWAL)
         net_deposits = deposits - withdrawals
-        current_value = self.current_value()
+        current_value = self.current_value(snapshot_sources)
         net_growth = current_value - net_deposits
 
         if net_deposits > 0:
@@ -462,9 +521,12 @@ class InvestmentLedger:
 
         return float(row[0])
 
-    def current_value(self) -> float:
+    def current_value(
+        self,
+        snapshot_sources: tuple[str, ...] | None = None,
+    ) -> float:
 
-        latest = self.latest_snapshot()
+        latest = self.latest_snapshot(snapshot_sources)
 
         if latest is not None:
             return latest.total_value
@@ -474,11 +536,16 @@ class InvestmentLedger:
             - self.total_transactions(WITHDRAWAL)
         )
 
-    def latest_snapshot(self) -> PortfolioSnapshot | None:
+    def latest_snapshot(
+        self,
+        sources: tuple[str, ...] | None = None,
+    ) -> PortfolioSnapshot | None:
+
+        source_clause, params = self._source_filter(sources)
 
         with self._connect() as conn:
             row = conn.execute(
-                """
+                f"""
                 SELECT
                     created_at,
                     total_value,
@@ -486,9 +553,11 @@ class InvestmentLedger:
                     positions_value,
                     source
                 FROM portfolio_snapshots
+                {source_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
-                """
+                """,
+                params,
             ).fetchone()
 
         if row is None:
@@ -502,11 +571,17 @@ class InvestmentLedger:
             source=row["source"],
         )
 
-    def snapshots(self, limit: int = 250) -> list[PortfolioSnapshot]:
+    def snapshots(
+        self,
+        limit: int = 250,
+        sources: tuple[str, ...] | None = None,
+    ) -> list[PortfolioSnapshot]:
+
+        source_clause, params = self._source_filter(sources)
 
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT
                     created_at,
                     total_value,
@@ -514,10 +589,11 @@ class InvestmentLedger:
                     positions_value,
                     source
                 FROM portfolio_snapshots
+                {source_clause}
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (*params, limit),
             ).fetchall()
 
         return [
@@ -530,6 +606,17 @@ class InvestmentLedger:
             )
             for row in reversed(rows)
         ]
+
+    def _source_filter(
+        self,
+        sources: tuple[str, ...] | None,
+    ) -> tuple[str, tuple[str, ...]]:
+
+        if not sources:
+            return "", ()
+
+        placeholders = ", ".join("?" for _ in sources)
+        return f"WHERE source IN ({placeholders})", tuple(sources)
 
     def transactions(self, limit: int = 100):
 
@@ -666,6 +753,20 @@ class InvestmentLedger:
                     reason,
                     created_at
                 FROM paper_live_comparison
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+    def shadow_observations(self, limit: int = 500):
+        with self._connect() as conn:
+            return conn.execute(
+                """
+                SELECT symbol, action, strategy, confidence, entry_price,
+                       exit_price, quantity, valid, cost_rate, gross_return,
+                       net_return, reason, created_at, resolved_at
+                FROM shadow_observations
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
@@ -826,6 +927,27 @@ class InvestmentLedger:
                     difference REAL NOT NULL,
                     reason TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS shadow_observations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    entry_price REAL NOT NULL,
+                    exit_price REAL,
+                    quantity REAL NOT NULL,
+                    valid INTEGER NOT NULL,
+                    cost_rate REAL NOT NULL,
+                    gross_return REAL,
+                    net_return REAL,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    resolved_at TEXT
                 )
                 """
             )

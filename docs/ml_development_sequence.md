@@ -110,3 +110,52 @@ Status: implemented as a live-readiness gate.
 The browser command center now exposes a live-readiness gate that combines paper
 validation, deployment mode, credential status, target-asset readiness, and
 emergency-stop state. Live trading remains locked unless every gate passes.
+
+## Sprint 12 - Shadow Trading And Live Execution Safety
+
+Status: implemented with live submission locked by default.
+
+The execution-safety layer lives in `live/execution_safety.py`. It adds staged
+paper, shadow, and limited-live modes; Kraken API permission inspection;
+pair-minimum and precision validation; free-balance checks; configurable fee,
+slippage, and cash-reserve estimates; and unique client order identifiers.
+
+Shadow mode uses live Kraken balances and market rules to validate orders but
+never submits them. Limited-live mode additionally requires the paper-validation
+gate, safe API permissions, a live-enabled deployment, an explicit environment
+unlock, and a typed confirmation. Confirmed fills remain required before local
+positions are updated, and the emergency stop attempts to cancel open Kraken
+orders.
+
+## Sprint 13 - Shadow Validation And Outcome Tracking
+
+Status: implemented.
+
+Circuit Alpha now keeps a persistent journal of shadow order previews across
+all selected markets. On the next observation for a market, it resolves the
+previous proposal against the new price and reports the Kraken-valid order
+rate, estimated cost rate, profitable-after-cost outcome rate, and average net
+return. Limited-live readiness now requires enough healthy shadow evidence in
+addition to the paper-trading and account-safety gates.
+
+## Sprint 14 - Daily Paper Sessions And Rolling Evidence
+
+Status: implemented.
+
+The command center now stores a local-time daily schedule and starts a bounded
+paper session at most once per calendar day. Each session forces paper mode,
+uses the bot service's existing retry and backoff behavior, stops after the
+configured cycle count, and records starts or safety-related skips in the audit
+log. The schedule survives app restarts and steadily builds the paper evidence
+required by the deployment gate without leaving the bot running forever.
+
+## Sprint 15 - Automated Multi-Market Universe Refresh
+
+Status: implemented.
+
+Before each daily paper session, Circuit Alpha can refresh liquid Kraken
+markets, run the existing strategy analysis, and select a diversified shortlist.
+The selector excludes cash and stablecoin base assets, duplicate quote markets,
+strategies without completed test trades, and non-positive risk-adjusted scores.
+The resulting crypto-only set is persisted and used by the bounded paper run.
+Automated scanning can be disabled or sized independently from the schedule.

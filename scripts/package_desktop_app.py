@@ -20,7 +20,7 @@ def main():
     command = [
         pyinstaller,
         "--name",
-        "Rogue Circuit Quant",
+        "Circuit Alpha",
         "--windowed",
         "--onefile",
         "desktop_app.py",

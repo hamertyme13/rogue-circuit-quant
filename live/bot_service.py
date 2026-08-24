@@ -41,13 +41,17 @@ class TradingBotService:
         self._last_success_at = ""
         self._last_error_at = ""
         self._last_error = ""
+        self._session_max_cycles = None
+        self._session_cycles = 0
 
-    def start(self) -> bool:
+    def start(self, max_cycles: int | None = None) -> bool:
 
         if self.is_running():
             return False
 
         self._stop_event.clear()
+        self._session_max_cycles = max_cycles
+        self._session_cycles = 0
         self._thread = threading.Thread(
             target=self._run,
             daemon=True,
@@ -114,12 +118,19 @@ class TradingBotService:
 
             with self._state_lock:
                 self._cycles_completed += 1
+                self._session_cycles += 1
                 self._consecutive_errors = 0
                 self._last_success_at = self._now()
                 self._last_error = ""
 
             if self.on_success is not None:
                 self.on_success(message)
+
+            if (
+                self._session_max_cycles is not None
+                and self._session_cycles >= self._session_max_cycles
+            ):
+                break
 
             if self._stop_event.wait(self.loop_seconds):
                 break

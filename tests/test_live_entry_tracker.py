@@ -107,3 +107,35 @@ def test_trader_isolates_market_failure_and_continues_cycle():
     assert "market unavailable" in events[0].reason
     assert events[1].symbol == "BTC/USD"
     assert trader.cycles == 1
+
+
+def test_shadow_mode_validates_buy_without_sending_order():
+    class ShadowClient:
+        def market(self, symbol):
+            return {
+                "base": "BTC",
+                "quote": "USD",
+                "limits": {"amount": {"min": 0.0001}},
+            }
+
+        def fetch_balance(self):
+            return {"free": {"USD": 1_000}}
+
+        def amount_to_precision(self, symbol, quantity):
+            return str(quantity)
+
+        def create_market_order(self, *args, **kwargs):
+            raise AssertionError("Shadow mode must not submit an order.")
+
+    trader = AutomatedKrakenTrader(client=ShadowClient())
+    trader.set_execution_mode("shadow")
+
+    event = trader._execute_signal(
+        "BTC/USD",
+        signal(price=100, confidence=0.95),
+    )
+
+    assert event.executed is False
+    assert event.order_status == "validated"
+    assert "no Kraken order sent" in event.reason
+    assert "BTC/USD" in trader.last_order_previews

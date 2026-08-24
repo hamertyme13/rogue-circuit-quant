@@ -10,15 +10,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_NAME = "Rogue Circuit Quant"
-BUNDLE_ID = "com.roguecircuit.quant"
-ICON_NAME = "RogueCircuitQuant"
+APP_NAME = "Circuit Alpha"
+BUNDLE_ID = "com.roguecircuit.alpha"
+SERVICE_ID = f"{BUNDLE_ID}.server"
+ICON_NAME = "CircuitAlpha"
 PORT = 8765
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Install the Rogue Circuit Quant macOS launcher."
+        description="Install the Circuit Alpha macOS launcher."
     )
     parser.add_argument(
         "--target",
@@ -31,7 +32,9 @@ def main():
     app_path = target_dir / f"{APP_NAME}.app"
 
     create_app_bundle(app_path)
+    service_path = install_background_service()
     print(f"Installed {APP_NAME} at {app_path}")
+    print(f"Installed daily background service at {service_path}")
     return 0
 
 
@@ -49,6 +52,47 @@ def create_app_bundle(app_path: Path):
     create_icon(icon_path)
     write_info_plist(contents / "Info.plist")
     write_launcher(macos / "launcher")
+
+
+def install_background_service() -> Path:
+    launch_agents = Path.home() / "Library" / "LaunchAgents"
+    launch_agents.mkdir(parents=True, exist_ok=True)
+    service_path = launch_agents / f"{SERVICE_ID}.plist"
+    python = ROOT / "venv" / "bin" / "python"
+    if not python.exists():
+        python = Path(shutil.which("python3") or "python3")
+    log_dir = ROOT / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "Label": SERVICE_ID,
+        "ProgramArguments": [
+            "/usr/bin/arch",
+            "-arm64",
+            str(python),
+            str(ROOT / "web_app.py"),
+        ],
+        "WorkingDirectory": str(ROOT),
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ProcessType": "Background",
+        "StandardOutPath": str(log_dir / "background-service.log"),
+        "StandardErrorPath": str(log_dir / "background-service.log"),
+    }
+    with service_path.open("wb") as handle:
+        plistlib.dump(payload, handle)
+
+    domain = f"gui/{os.getuid()}"
+    subprocess.run(
+        ["launchctl", "bootout", domain, str(service_path)],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    subprocess.run(
+        ["launchctl", "bootstrap", domain, str(service_path)],
+        check=True,
+    )
+    return service_path
 
 
 def write_info_plist(path: Path):

@@ -11,7 +11,7 @@ def create_app(center: WebCommandCenter | None = None):
         ) from exc
 
     command_center = center or WebCommandCenter()
-    app = FastAPI(title="Rogue Circuit Quant API")
+    app = FastAPI(title="Circuit Alpha API")
 
     def require_auth(x_rogue_token: str | None = Header(default=None)):
         if not command_center.auth.verify(x_rogue_token):

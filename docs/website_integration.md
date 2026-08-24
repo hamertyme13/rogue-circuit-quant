@@ -1,6 +1,6 @@
 # Rogue Circuit Website Integration
 
-Rogue Circuit Quant can run as a local browser app today and as a backend API
+Circuit Alpha can run as a local browser app today and as a backend API
 for the Rogue Circuit website later. The safest production shape is to keep the
 trading service private, put a reverse proxy or website backend in front of it,
 and require `ROGUE_QUANT_AUTH_TOKEN` for every write action.

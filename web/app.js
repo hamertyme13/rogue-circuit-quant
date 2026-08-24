@@ -9,19 +9,19 @@ const percent = new Intl.NumberFormat("en-US", {
 });
 
 const metricLabels = [
-  ["Deposited", "deposits", "money"],
-  ["Withdrawn", "withdrawals", "money"],
-  ["Net Invested", "net_deposits", "money"],
-  ["Current Value", "current_value", "money"],
-  ["Net Growth", "net_growth", "money"],
-  ["Growth", "growth_percent", "percent"],
+  ["Total Deposited", "deposits", "money"],
+  ["Total Withdrawn", "withdrawals", "money"],
+  ["Capital at Work", "net_deposits", "money"],
+  ["Portfolio Value", "current_value", "money"],
+  ["Profit / Loss", "net_growth", "money"],
+  ["Return", "growth_percent", "percent"],
 ];
 
 let currentState = null;
 let toastTimer = null;
 
 async function request(path, options = {}) {
-  const token = localStorage.getItem("rogue_quant_token") || "";
+  const token = localStorage.getItem("circuit_alpha_token") || "";
   const headers = {
     "Content-Type": "application/json",
     ...(token ? { "X-Rogue-Token": token } : {}),
@@ -34,9 +34,9 @@ async function request(path, options = {}) {
   const data = await response.json();
 
   if (response.status === 401) {
-    const entered = window.prompt("Rogue Quant token");
+    const entered = window.prompt("Circuit Alpha access token");
     if (entered) {
-      localStorage.setItem("rogue_quant_token", entered);
+      localStorage.setItem("circuit_alpha_token", entered);
       return request(path, options);
     }
   }
@@ -71,7 +71,10 @@ function render(state) {
   renderMetrics(state.summary);
   renderService(state);
   renderSystem(state);
+  renderExecutionSafety(state.execution_safety, state.live_readiness);
+  renderDailySchedule(state.daily_schedule || {});
   document.getElementById("bot-symbols").textContent = state.service.symbols.join(", ");
+  renderWorkflow(state);
   renderServiceHealth(state.service);
   renderControls(state.controls);
   renderChart(state.chart_data?.equity_curve || state.snapshots);
@@ -124,6 +127,14 @@ function render(state) {
     ["difference", money],
     ["reason"],
   ]);
+  renderRows("shadow-table", state.shadow_observations || [], [
+    ["symbol"],
+    ["action"],
+    ["entry_price", money],
+    ["exit_price", (value) => value == null ? "Pending" : money(value)],
+    ["valid", yesNo],
+    ["net_return", (value) => value == null ? "Pending" : ratio(value)],
+  ]);
   renderRows("opportunities-table", state.market_opportunities || [], [
     ["rank"],
     ["symbol"],
@@ -154,6 +165,40 @@ function renderService(state) {
       ? "Bot running"
       : "Bot stopped";
   document.getElementById("service-status").textContent = status;
+  document.getElementById("automation-status").textContent = status;
+}
+
+function renderWorkflow(state) {
+  const opportunities = state.market_opportunities || [];
+  const hasCredentials = state.credential_status.kraken_configured;
+  const hasSelection = state.service.symbols.length > 0;
+
+  document.getElementById("connection-step").dataset.ready = hasCredentials ? "true" : "false";
+  document.getElementById("scan-step").dataset.ready = opportunities.length ? "true" : "false";
+  document.getElementById("selection-step").dataset.ready = hasSelection ? "true" : "false";
+  document.getElementById("automation-step").dataset.ready = state.service.running ? "true" : "false";
+  document.getElementById("market-count").textContent = opportunities.length
+    ? `${opportunities.length} markets ranked`
+    : "No ranking yet";
+}
+
+function renderExecutionSafety(safety, readiness) {
+  const permissions = safety.permissions || {};
+  const modeSelect = document.getElementById("execution-mode");
+  modeSelect.value = safety.mode || "paper";
+  modeSelect.querySelector('option[value="limited_live"]').disabled = !readiness.ready;
+  document.getElementById("permission-status").textContent = permissions.message || "Not checked";
+  document.getElementById("automation-status").textContent = safety.mode === "shadow"
+    ? "Shadow mode"
+    : safety.mode === "limited_live"
+      ? "Limited live"
+      : "Paper mode";
+
+  const previews = Object.values(safety.order_previews || {});
+  const preview = previews.at(-1);
+  document.getElementById("order-preview-detail").textContent = preview
+    ? `${preview.symbol} ${preview.side.toUpperCase()} | ${money(preview.notional)} notional | ${money(preview.estimated_fee)} fee | ${money(preview.estimated_slippage)} slippage | ${preview.valid ? "VALID" : preview.reasons.join(" ")}`
+    : "No shadow order preview yet.";
 }
 
 function renderServiceHealth(service) {
@@ -204,6 +249,7 @@ function renderTargetAsset(target) {
 
 function renderLiveReadiness(readiness) {
   const validation = readiness.paper_validation || {};
+  const shadow = readiness.shadow_validation || {};
   const label = readiness.ready ? "Ready" : "Locked";
   const reason = readiness.reasons?.[0] || readiness.message;
 
@@ -212,6 +258,10 @@ function renderLiveReadiness(readiness) {
   document.getElementById("paper-closed-trades").textContent = validation.closed_trades || 0;
   document.getElementById("paper-growth").textContent = ratio(validation.growth_percent || 0);
   document.getElementById("paper-drawdown").textContent = ratio(validation.max_drawdown || 0);
+  document.getElementById("shadow-samples").textContent = shadow.resolved_samples || 0;
+  document.getElementById("shadow-valid-rate").textContent = ratio(shadow.valid_rate || 0);
+  document.getElementById("shadow-profit-rate").textContent = ratio(shadow.profitable_rate || 0);
+  document.getElementById("shadow-net-return").textContent = ratio(shadow.average_net_return || 0);
   document.getElementById("live-gate-message").textContent = reason;
   document.getElementById("live-gate-message").dataset.ready = readiness.ready ? "true" : "false";
 }
@@ -220,6 +270,18 @@ function renderControls(controls) {
   document.getElementById("max-order").value = controls.max_order_notional;
   document.getElementById("min-confidence").value = controls.min_signal_confidence;
   document.getElementById("loop-seconds").value = controls.loop_seconds;
+}
+
+function renderDailySchedule(schedule) {
+  document.getElementById("daily-enabled").checked = Boolean(schedule.enabled);
+  document.getElementById("daily-time").value = schedule.time || "09:00";
+  document.getElementById("daily-cycles").value = schedule.cycles || 12;
+  document.getElementById("daily-auto-scan").checked = schedule.auto_scan !== false;
+  document.getElementById("daily-scan-limit").value = schedule.scan_limit || 8;
+  document.getElementById("daily-active-limit").value = schedule.active_limit || 3;
+  document.getElementById("daily-schedule-detail").textContent = schedule.enabled
+    ? `Next session: ${shortDate(schedule.next_run)} | ${schedule.cycles} cycles. ${schedule.last_result || ""}`
+    : "Schedule is off. Enable it to collect paper evidence every day.";
 }
 
 function renderChart(snapshots) {
@@ -373,10 +435,31 @@ function settingsPayload() {
   };
 }
 
+function dailySchedulePayload() {
+  return {
+    enabled: document.getElementById("daily-enabled").checked,
+    time: document.getElementById("daily-time").value,
+    cycles: document.getElementById("daily-cycles").value,
+    auto_scan: document.getElementById("daily-auto-scan").checked,
+    scan_limit: document.getElementById("daily-scan-limit").value,
+    active_limit: document.getElementById("daily-active-limit").value,
+  };
+}
+
 function scanPayload() {
   return {
     scan_limit: document.getElementById("scan-limit").value,
     active_limit: document.getElementById("active-limit").value,
+  };
+}
+
+function modePayload() {
+  const mode = document.getElementById("execution-mode").value;
+  return {
+    mode,
+    confirmation: mode === "limited_live"
+      ? window.prompt("Type ENABLE LIMITED LIVE to confirm") || ""
+      : "",
   };
 }
 
@@ -462,7 +545,6 @@ function bindActions() {
   bindAction("refresh-button", "Refreshing", loadState);
   bindAction("deposit-button", "Adding", () => post("/api/deposits", amountPayload("ledger-amount", "ledger-note")));
   bindAction("withdraw-button", "Withdrawing", () => post("/api/withdrawals", amountPayload("ledger-amount", "ledger-note")));
-  bindAction("manual-snapshot-button", "Recording", () => post("/api/snapshots/manual", amountPayload("manual-value")));
   bindAction("kraken-snapshot-button", "Checking", () => post("/api/snapshots/kraken"));
   bindAction("run-cycle-button", "Running", () => post("/api/trading/run-once"));
   bindAction("start-bot-button", "Starting", () => post("/api/bot/start"));
@@ -470,10 +552,12 @@ function bindActions() {
   bindAction("emergency-button", "Stopping", () => post("/api/emergency-stop"));
   bindAction("resume-button", "Resuming", () => post("/api/resume"));
   bindAction("save-settings-button", "Saving", () => post("/api/settings", settingsPayload()));
+  bindAction("save-schedule-button", "Saving", () => post("/api/schedule/daily-paper", dailySchedulePayload()));
   bindAction("save-credentials-button", "Encrypting", saveCredentials);
   bindAction("check-kraken-button", "Checking", () => post("/api/kraken/check"));
   bindAction("use-target-button", "Switching", () => post("/api/kraken/use-target"));
   bindAction("scan-markets-button", "Analyzing", () => post("/api/markets/scan", scanPayload()));
+  bindAction("save-mode-button", "Applying", () => post("/api/trading/mode", modePayload()));
 }
 
 window.addEventListener("DOMContentLoaded", () => {
