@@ -112,3 +112,54 @@ class ReportTables:
         )
 
         console.print(table)
+
+    @staticmethod
+    def comparison(best, metrics):
+
+        table = Table(
+            title="📊 Training vs Validation",
+            show_lines=True,
+        )
+
+        table.add_column(
+            "Metric",
+            style="cyan",
+        )
+
+        table.add_column(
+            "Training",
+            justify="right",
+            style="green",
+        )
+
+        table.add_column(
+            "Validation",
+            justify="right",
+            style="magenta",
+        )
+
+        table.add_row(
+            "Win Rate",
+            ColorEngine.win_rate(best.win_rate),
+            ColorEngine.win_rate(metrics.win_rate()),
+        )
+
+        table.add_row(
+            "Net Profit",
+            ColorEngine.profit(best.net_profit),
+            ColorEngine.profit(metrics.total_profit()),
+        )
+
+        table.add_row(
+            "Drawdown",
+            ColorEngine.drawdown(best.drawdown),
+            ColorEngine.drawdown(metrics.max_drawdown()),
+        )
+
+        table.add_row(
+            "Trades",
+            str(best.trades),
+            str(metrics.total_trades()),
+        )
+
+        console.print(table)

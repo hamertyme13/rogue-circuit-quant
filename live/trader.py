@@ -9,12 +9,18 @@ from ai.strategy_analysis import StrategyAnalyst, StrategyDecision
 from config import (
     ALLOW_LIVE_TRADING,
     LIVE_CANDLE_LIMIT,
+    LIVE_CASH_RESERVE_RATE,
     LIVE_LOOP_SECONDS,
+    LIVE_SLIPPAGE_RATE,
     LIVE_SYMBOLS,
+    LIVE_TAKER_FEE_RATE,
     LIVE_TIMEFRAME,
     MAX_ORDER_NOTIONAL,
     MIN_SIGNAL_CONFIDENCE,
-    PAPER_TRADING,
+    OPPORTUNITY_MIN_CONFIDENCE,
+    OPPORTUNITY_MIN_NET_PROFIT,
+    OPPORTUNITY_MIN_WIN_RATE,
+    EXECUTION_MODE,
     REOPTIMIZE_EVERY_CYCLES,
     STARTING_BALANCE,
 )
@@ -26,6 +32,13 @@ from risk.kill_switch import KillSwitch
 from risk.position_manager import PositionManager
 from risk.position_size import PositionSizer
 from risk.risk_manager import RiskManager
+from live.execution_safety import (
+    EXECUTION_MODES,
+    LIMITED_LIVE,
+    PAPER,
+    SHADOW,
+    LiveExecutionSafety,
+)
 
 
 @dataclass
@@ -40,7 +53,10 @@ class TradeCycleEvent:
     quantity: float = 0.0
     reason: str = ""
     order_id: str = ""
+    order_status: str = ""
     mode: str = "paper"
+    opportunity: bool = False
+    opportunity_reason: str = ""
 
 
 @dataclass
@@ -54,6 +70,22 @@ class StrategyPerformanceSnapshot:
     drawdown: float
     trades: int
     rationale: str
+
+
+@dataclass(frozen=True)
+class MarketOpportunity:
+    rank: int
+    symbol: str
+    action: str
+    confidence: float
+    price: float
+    strategy: str
+    score: float
+    net_profit: float
+    win_rate: float
+    drawdown: float
+    trades: int
+    reason: str = ""
 
 
 class AutomatedKrakenTrader:
@@ -82,13 +114,21 @@ class AutomatedKrakenTrader:
         self.max_order_notional = MAX_ORDER_NOTIONAL
         self.min_signal_confidence = MIN_SIGNAL_CONFIDENCE
         self.loop_seconds = LIVE_LOOP_SECONDS
+        self.symbols = list(LIVE_SYMBOLS)
+        self.execution_mode = (
+            EXECUTION_MODE if EXECUTION_MODE in EXECUTION_MODES else PAPER
+        )
+        self.execution_safety = LiveExecutionSafety(
+            taker_fee_rate=LIVE_TAKER_FEE_RATE,
+            slippage_rate=LIVE_SLIPPAGE_RATE,
+            reserve_rate=LIVE_CASH_RESERVE_RATE,
+        )
+        self.last_order_previews = {}
 
     def run_forever(self):
 
         self.console.print(
-            "[bold yellow]PAPER[/bold yellow]"
-            if PAPER_TRADING
-            else "[bold red]LIVE[/bold red]"
+            f"[bold yellow]{self.execution_mode.upper()}[/bold yellow]"
         )
 
         while True:
@@ -113,38 +153,109 @@ class AutomatedKrakenTrader:
 
         events = []
 
-        for symbol in LIVE_SYMBOLS:
-            df = self._fetch_market_frame(symbol)
-
-            if self._should_reoptimize(symbol):
-                self.decisions[symbol] = self._optimize(symbol, df)
-
-            decision = self.decisions.get(symbol)
-
-            if decision is None:
-                continue
-
-            strategy = decision.build_strategy()
-            signal = strategy.generate_signals(df)[-1]
-
-            self.console.print(
-                f"{symbol} {signal.action} "
-                f"confidence={signal.confidence:.2f} "
-                f"price={signal.price:,.2f}"
-            )
-
-            events.append(
-                self._execute_signal(symbol, signal)
-            )
+        for symbol in self.symbols:
+            try:
+                events.append(self._run_symbol(symbol))
+            except Exception as exc:
+                self.console.print(f"{symbol} cycle failed: {exc}")
+                events.append(TradeCycleEvent(
+                    symbol=symbol,
+                    action=HOLD,
+                    confidence=0.0,
+                    price=0.0,
+                    strategy="MarketError",
+                    executed=False,
+                    reason=f"Market cycle failed: {exc}",
+                    mode=self.mode,
+                ))
 
         self.cycles += 1
 
         return events
 
+    def _run_symbol(self, symbol: str) -> TradeCycleEvent:
+
+        df = self._fetch_market_frame(symbol)
+
+        if self._should_reoptimize(symbol):
+            self.decisions[symbol] = self._optimize(symbol, df)
+
+        decision = self.decisions.get(symbol)
+
+        if decision is None:
+            raise RuntimeError("No strategy decision is available.")
+
+        strategy = decision.build_strategy()
+        signal = strategy.generate_signals(df)[-1]
+        self.portfolio.update_market_price(symbol, signal.price)
+
+        self.console.print(
+            f"{symbol} {signal.action} "
+            f"confidence={signal.confidence:.2f} "
+            f"price={signal.price:,.2f}"
+        )
+
+        return self._execute_signal(symbol, signal)
+
+    def scan_markets(self, symbols: list[str]) -> list[MarketOpportunity]:
+
+        opportunities = []
+
+        for symbol in symbols:
+            try:
+                df = self._fetch_market_frame(symbol)
+                decision = self._optimize(symbol, df)
+                signal = decision.build_strategy().generate_signals(df)[-1]
+                performance = self.strategy_performance[symbol]
+                score = self._market_score(performance, signal.confidence)
+                opportunities.append(MarketOpportunity(
+                    rank=0,
+                    symbol=symbol,
+                    action=signal.action,
+                    confidence=float(signal.confidence),
+                    price=float(signal.price),
+                    strategy=signal.strategy,
+                    score=score,
+                    net_profit=performance.net_profit,
+                    win_rate=performance.win_rate,
+                    drawdown=performance.drawdown,
+                    trades=performance.trades,
+                    reason=performance.rationale,
+                ))
+            except Exception as exc:
+                self.console.print(f"{symbol} scan failed: {exc}")
+
+        ranked = sorted(
+            opportunities,
+            key=lambda item: (item.score, item.confidence),
+            reverse=True,
+        )
+        return [
+            MarketOpportunity(**{**item.__dict__, "rank": index})
+            for index, item in enumerate(ranked, start=1)
+        ]
+
+    @staticmethod
+    def _market_score(performance, confidence: float) -> float:
+
+        return round(
+            performance.score
+            * max(0.0, float(confidence))
+            * max(0.0, 1.0 - float(performance.drawdown)),
+            4,
+        )
+
     @property
     def mode(self) -> str:
 
-        return "paper" if PAPER_TRADING else "live"
+        return self.execution_mode
+
+    def set_execution_mode(self, mode: str):
+
+        normalized = str(mode or "").lower()
+        if normalized not in EXECUTION_MODES:
+            raise ValueError(f"Unsupported execution mode: {mode}")
+        self.execution_mode = normalized
 
     def emergency_stop(self):
 
@@ -209,6 +320,8 @@ class AutomatedKrakenTrader:
                 executed=False,
                 reason="Signal held or confidence was below threshold.",
                 mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
             )
 
         if signal.action == BUY:
@@ -243,6 +356,8 @@ class AutomatedKrakenTrader:
                 executed=False,
                 reason="Risk controls blocked the buy.",
                 mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
             )
 
         quantity = self.sizer.calculate_quantity(
@@ -254,8 +369,12 @@ class AutomatedKrakenTrader:
             self.max_order_notional / signal.price,
         )
 
-        if PAPER_TRADING:
-            self.positions.open_position(signal, quantity)
+        if self.mode == PAPER:
+            self.positions.open_position(
+                symbol,
+                signal,
+                quantity,
+            )
             self.console.print(
                 f"{symbol} paper buy quantity={quantity:.8f}"
             )
@@ -269,10 +388,93 @@ class AutomatedKrakenTrader:
                 quantity=quantity,
                 reason="Paper buy opened.",
                 mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
             )
 
-        order = self._place_live_order(symbol, "buy", quantity)
-        self.positions.open_position(signal, quantity)
+        preview = self.execution_safety.preview(
+            self.client,
+            symbol,
+            "buy",
+            quantity,
+            signal.price,
+        )
+        self.last_order_previews[symbol] = preview.as_dict()
+
+        if not preview.valid:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                reason="Order preview blocked: " + " ".join(preview.reasons),
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        if self.mode == SHADOW:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                order_status="validated",
+                reason=(
+                    f"Shadow BUY validated; no Kraken order sent. "
+                    f"Estimated fee={preview.estimated_fee:.8f} "
+                    f"{preview.balance_asset}, slippage="
+                    f"{preview.estimated_slippage:.8f}."
+                ),
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        order = self._place_live_order(
+            symbol,
+            "buy",
+            preview.quantity,
+            preview.client_order_id,
+        )
+        order_id = self._order_id(order)
+        order_status = self._order_status(order)
+        filled_quantity = self._filled_quantity(order)
+        fill_price = self._fill_price(order, signal.price)
+
+        if filled_quantity <= 0:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=0.0,
+                order_id=order_id,
+                order_status=order_status,
+                reason="Live buy submitted; fill was not confirmed.",
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        self.positions.open_position(
+            symbol,
+            signal,
+            filled_quantity,
+            order_id=order_id,
+            order_status=order_status,
+            fill_price=fill_price,
+        )
 
         return TradeCycleEvent(
             symbol=symbol,
@@ -281,15 +483,18 @@ class AutomatedKrakenTrader:
             price=signal.price,
             strategy=signal.strategy,
             executed=True,
-            quantity=quantity,
-            order_id=self._order_id(order),
-            reason="Live buy submitted.",
+            quantity=filled_quantity,
+            order_id=order_id,
+            order_status=order_status,
+            reason="Live buy filled and tracked.",
             mode=self.mode,
+            opportunity=self._is_opportunity(symbol, signal),
+            opportunity_reason=self._opportunity_reason(symbol),
         )
 
     def _sell(self, symbol: str, signal) -> TradeCycleEvent:
 
-        if not self.portfolio.has_open_position():
+        if not self.portfolio.has_open_position_for(symbol):
             return TradeCycleEvent(
                 symbol=symbol,
                 action=signal.action,
@@ -301,10 +506,14 @@ class AutomatedKrakenTrader:
                 mode=self.mode,
             )
 
-        quantity = self.portfolio.open_trades[0].quantity
+        open_trade = self.portfolio.open_position_for(symbol)
+        quantity = open_trade.quantity
 
-        if PAPER_TRADING:
-            self.positions.close_position(signal)
+        if self.mode == PAPER:
+            self.positions.close_position(
+                symbol,
+                signal,
+            )
             self.console.print(
                 f"{symbol} paper sell quantity={quantity:.8f}"
             )
@@ -320,8 +529,73 @@ class AutomatedKrakenTrader:
                 mode=self.mode,
             )
 
-        order = self._place_live_order(symbol, "sell", quantity)
-        self.positions.close_position(signal)
+        preview = self.execution_safety.preview(
+            self.client,
+            symbol,
+            "sell",
+            quantity,
+            signal.price,
+        )
+        self.last_order_previews[symbol] = preview.as_dict()
+
+        if not preview.valid:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                reason="Order preview blocked: " + " ".join(preview.reasons),
+                mode=self.mode,
+            )
+
+        if self.mode == SHADOW:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                order_status="validated",
+                reason="Shadow SELL validated; no Kraken order sent.",
+                mode=self.mode,
+            )
+
+        order = self._place_live_order(
+            symbol,
+            "sell",
+            preview.quantity,
+            preview.client_order_id,
+        )
+        order_id = self._order_id(order)
+        order_status = self._order_status(order)
+        filled_quantity = self._filled_quantity(order)
+
+        if filled_quantity <= 0:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=0.0,
+                order_id=order_id,
+                order_status=order_status,
+                reason="Live sell submitted; fill was not confirmed.",
+                mode=self.mode,
+            )
+
+        self.positions.close_position(
+            symbol,
+            signal,
+        )
 
         return TradeCycleEvent(
             symbol=symbol,
@@ -330,9 +604,10 @@ class AutomatedKrakenTrader:
             price=signal.price,
             strategy=signal.strategy,
             executed=True,
-            quantity=quantity,
-            order_id=self._order_id(order),
-            reason="Live sell submitted.",
+            quantity=min(filled_quantity, quantity),
+            order_id=order_id,
+            order_status=order_status,
+            reason="Live sell filled and tracked.",
             mode=self.mode,
         )
 
@@ -341,9 +616,10 @@ class AutomatedKrakenTrader:
         symbol: str,
         side: str,
         quantity: float,
+        client_order_id: str,
     ):
 
-        if not ALLOW_LIVE_TRADING:
+        if self.mode != LIMITED_LIVE or not ALLOW_LIVE_TRADING:
             raise RuntimeError(
                 "Live order blocked. Set ALLOW_LIVE_TRADING=True "
                 "only after validating paper trading."
@@ -353,7 +629,13 @@ class AutomatedKrakenTrader:
             symbol,
             side,
             quantity,
+            client_order_id=client_order_id,
         )
+
+        order_id = self._order_id(order)
+        status = self._order_status(order)
+        if order_id and status not in {"closed", "filled"}:
+            order = self.client.fetch_order(order_id, symbol)
 
         self.console.print(order)
 
@@ -365,6 +647,81 @@ class AutomatedKrakenTrader:
             return ""
 
         return str(order.get("id") or order.get("clientOrderId") or "")
+
+    def _order_status(self, order: dict[str, Any] | None) -> str:
+
+        if not order:
+            return ""
+
+        return str(order.get("status") or "")
+
+    def _filled_quantity(self, order: dict[str, Any] | None) -> float:
+
+        if not order:
+            return 0.0
+
+        try:
+            return float(order.get("filled") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _fill_price(
+        self,
+        order: dict[str, Any] | None,
+        fallback_price: float,
+    ) -> float:
+
+        if not order:
+            return fallback_price
+
+        for key in ("average", "price"):
+            try:
+                value = float(order.get(key) or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+
+            if value > 0:
+                return value
+
+        cost = order.get("cost")
+        filled = self._filled_quantity(order)
+
+        try:
+            cost_value = float(cost or 0.0)
+        except (TypeError, ValueError):
+            cost_value = 0.0
+
+        if cost_value > 0 and filled > 0:
+            return cost_value / filled
+
+        return fallback_price
+
+    def _is_opportunity(self, symbol: str, signal) -> bool:
+
+        performance = self.strategy_performance.get(symbol)
+
+        return (
+            signal.action == BUY
+            and signal.confidence >= OPPORTUNITY_MIN_CONFIDENCE
+            and performance is not None
+            and performance.net_profit >= OPPORTUNITY_MIN_NET_PROFIT
+            and performance.win_rate >= OPPORTUNITY_MIN_WIN_RATE
+        )
+
+    def _opportunity_reason(self, symbol: str) -> str:
+
+        performance = self.strategy_performance.get(symbol)
+
+        if performance is None:
+            return ""
+
+        return (
+            f"{symbol} has a qualified BUY signal. "
+            f"Backtest net profit={performance.net_profit:.2f}, "
+            f"win rate={performance.win_rate:.2%}, "
+            f"drawdown={performance.drawdown:.2%}. "
+            "This is an opportunity alert, not a profit guarantee."
+        )
 
     def _fetch_market_frame(self, symbol: str) -> pd.DataFrame:
 

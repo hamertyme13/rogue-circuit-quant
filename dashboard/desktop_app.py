@@ -88,7 +88,7 @@ class RogueCircuitDesktopApp:
 
     def _configure_window(self):
 
-        self.root.title("Rogue Circuit Quant")
+        self.root.title("Circuit Alpha")
         self.root.geometry("1120x760")
         self.root.minsize(980, 680)
         self.root.configure(bg=THEME["night"])
@@ -322,7 +322,7 @@ class RogueCircuitDesktopApp:
 
         title = ttk.Label(
             header,
-            text="Rogue Circuit Quant",
+            text="Circuit Alpha",
             style="Title.TLabel",
         )
         title.grid(

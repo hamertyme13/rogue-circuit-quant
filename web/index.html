@@ -1,169 +1,105 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Rogue Circuit Quant</title>
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <main class="app-shell">
-      <header class="topbar">
-        <div class="brand">
-          <div class="brand-mark">RC</div>
-          <div>
-            <p class="eyebrow">Rogue Circuit OS</p>
-            <h1>Rogue Circuit Quant</h1>
-          </div>
-        </div>
-        <div class="status-pill" id="service-status">Loading</div>
-      </header>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Circuit Alpha</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<main class="app-shell">
+  <header class="topbar">
+    <div class="brand"><div class="brand-mark">CA</div><div><p class="eyebrow">Rogue Circuit</p><h1>Circuit Alpha</h1></div></div>
+    <div class="header-actions"><div class="status-pill" id="service-status">Loading</div><button class="button icon-button ghost" id="refresh-button" title="Refresh dashboard" aria-label="Refresh dashboard">&#8635;</button></div>
+  </header>
 
-      <section class="metrics-grid" id="metrics"></section>
+  <section class="metrics-grid" id="metrics"></section>
 
-      <section class="workspace">
-        <article class="panel chart-panel">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Portfolio</p>
-              <h2>Investment Value</h2>
-            </div>
-            <button class="button ghost" id="refresh-button">Refresh</button>
-          </div>
-          <canvas id="value-chart" width="960" height="420"></canvas>
-        </article>
+  <section class="workflow-strip" aria-label="Trading workflow">
+    <div class="workflow-step" id="connection-step"><span>1</span><div><strong>Connect Kraken</strong><small id="credential-mode">Checking</small></div></div>
+    <div class="workflow-step" id="scan-step"><span>2</span><div><strong>Scan Markets</strong><small id="market-count">No ranking yet</small></div></div>
+    <div class="workflow-step" id="selection-step"><span>3</span><div><strong>Review Selection</strong><small id="bot-symbols">Loading</small></div></div>
+    <div class="workflow-step" id="automation-step"><span>4</span><div><strong>Paper Trade</strong><small id="automation-status">Bot stopped</small></div></div>
+  </section>
 
-        <aside class="control-stack">
-          <article class="panel">
-            <div class="panel-header">
-              <h2>Investment Ledger</h2>
-            </div>
-            <label>
-              Amount
-              <input id="ledger-amount" type="number" min="0" step="0.01" />
-            </label>
-            <label>
-              Note
-              <input id="ledger-note" type="text" />
-            </label>
-            <div class="button-row">
-              <button class="button primary" id="deposit-button">Add Deposit</button>
-              <button class="button ghost" id="withdraw-button">Add Withdrawal</button>
-            </div>
-          </article>
+  <section class="primary-grid">
+    <div class="primary-column">
+      <article class="panel chart-panel">
+        <div class="panel-header"><div><p class="eyebrow">Portfolio</p><h2>Performance Over Time</h2></div><button class="button compact ghost" id="kraken-snapshot-button">Sync Kraken Balance</button></div>
+        <canvas id="value-chart" width="960" height="360"></canvas>
+      </article>
+      <article class="panel opportunity-panel">
+        <div class="panel-header"><div><p class="eyebrow">Market Ranking</p><h2>Current Opportunities</h2></div><span class="panel-note">Paper estimates, not guaranteed returns</span></div>
+        <div class="table-wrap opportunity-table-wrap"><table><thead><tr><th>Rank</th><th>Market</th><th>Signal</th><th>Confidence</th><th>Score</th><th>Test Profit</th><th>Win Rate</th><th>Drawdown</th></tr></thead><tbody id="opportunities-table"></tbody></table></div>
+      </article>
+    </div>
 
-          <article class="panel">
-            <div class="panel-header">
-              <h2>Portfolio Value</h2>
-            </div>
-            <label>
-              Manual Value
-              <input id="manual-value" type="number" min="0" step="0.01" />
-            </label>
-            <button class="button accent" id="manual-snapshot-button">Record Manual Snapshot</button>
-            <button class="button ghost" id="kraken-snapshot-button">Refresh Kraken Snapshot</button>
-          </article>
+    <aside class="action-column">
+      <section class="action-section"><div class="section-number">01</div><div class="action-content">
+        <h2>Find Markets</h2><p>Analyze liquid Kraken markets and assign the strongest candidates to paper trading.</p>
+        <div class="scan-controls"><label>Analyze <input id="scan-limit" type="number" min="2" max="12" value="8" /></label><label>Trade <input id="active-limit" type="number" min="1" max="5" value="3" /></label></div>
+        <button class="button primary" id="scan-markets-button">Scan and Select Markets</button>
+      </div></section>
+      <section class="action-section"><div class="section-number">02</div><div class="action-content">
+        <h2>Run Paper Bot</h2><p id="service-detail">Waiting to start.</p>
+        <div class="bot-stats"><div><span>Cycles</span><strong id="service-cycles">0</strong></div><div><span>Errors</span><strong id="service-errors">0</strong></div><div><span>Trades</span><strong id="paper-closed-trades">0</strong></div><div><span>Drawdown</span><strong id="paper-drawdown">0.00%</strong></div></div>
+        <div class="button-row"><button class="button primary" id="start-bot-button">Start Paper Bot</button><button class="button ghost" id="stop-bot-button">Stop</button></div>
+        <button class="button compact ghost" id="run-cycle-button">Run One Test Cycle</button>
+        <p class="preview-detail" id="order-preview-detail">No shadow order preview yet.</p>
+      </div></section>
+      <section class="action-section safety-section"><div class="section-number">03</div><div class="action-content">
+        <h2>Trading Stage</h2>
+        <label>Execution Mode
+          <select id="execution-mode">
+            <option value="paper">Paper</option>
+            <option value="shadow">Shadow</option>
+            <option value="limited_live" disabled>Limited Live (Locked)</option>
+          </select>
+        </label>
+        <button class="button compact accent" id="save-mode-button">Apply Stage</button>
+        <p class="gate-message" id="live-gate-message">Live trading remains locked.</p>
+        <div class="bot-stats shadow-stats"><div><span>Shadow Samples</span><strong id="shadow-samples">0</strong></div><div><span>Valid Orders</span><strong id="shadow-valid-rate">0.00%</strong></div><div><span>Profitable</span><strong id="shadow-profit-rate">0.00%</strong></div><div><span>Net Return</span><strong id="shadow-net-return">0.00%</strong></div></div>
+        <div class="button-row"><button class="button danger" id="emergency-button">Emergency Stop</button><button class="button ghost" id="resume-button">Clear Stop</button></div>
+      </div></section>
+      <section class="action-section"><div class="section-number">04</div><div class="action-content">
+        <h2>Daily Paper Session</h2>
+        <label class="toggle-row"><input id="daily-enabled" type="checkbox" /><span>Run automatically each day</span></label>
+        <label class="toggle-row"><input id="daily-auto-scan" type="checkbox" checked /><span>Refresh and diversify markets first</span></label>
+        <div class="scan-controls"><label>Start Time <input id="daily-time" type="time" value="09:00" /></label><label>Cycles <input id="daily-cycles" type="number" min="1" max="288" value="12" /></label></div>
+        <div class="scan-controls"><label>Analyze <input id="daily-scan-limit" type="number" min="2" max="12" value="8" /></label><label>Trade <input id="daily-active-limit" type="number" min="1" max="5" value="3" /></label></div>
+        <button class="button compact accent" id="save-schedule-button">Save Daily Schedule</button>
+        <p class="preview-detail" id="daily-schedule-detail">Schedule is off.</p>
+      </div></section>
+    </aside>
+  </section>
 
-          <article class="panel">
-            <div class="panel-header">
-              <h2>Bot Controls</h2>
-            </div>
-            <div class="button-row">
-              <button class="button primary" id="run-cycle-button">Run One Cycle</button>
-              <button class="button primary" id="start-bot-button">Start Bot</button>
-            </div>
-            <div class="button-row">
-              <button class="button ghost" id="stop-bot-button">Stop Bot</button>
-              <button class="button danger" id="emergency-button">Emergency Stop</button>
-            </div>
-            <button class="button accent" id="resume-button">Resume Trading</button>
-          </article>
+  <section class="system-line" aria-label="System status">
+    <span>Mode <strong id="deployment-mode">Loading</strong></span><span>Auth <strong id="auth-mode">Loading</strong></span><span>Notifications <strong id="notification-mode">Loading</strong></span><span>QUID <strong id="target-mode">Loading</strong></span><span>Live Gate <strong id="live-gate-mode">Loading</strong></span><span class="visually-hidden" id="paper-cycles">0</span><span class="visually-hidden" id="paper-growth">0.00%</span>
+  </section>
 
-          <article class="panel">
-            <div class="panel-header">
-              <h2>Risk Controls</h2>
-            </div>
-            <label>
-              Max Order $
-              <input id="max-order" type="number" min="0" step="0.01" />
-            </label>
-            <label>
-              Min Confidence
-              <input id="min-confidence" type="number" min="0" max="1" step="0.01" />
-            </label>
-            <label>
-              Loop Seconds
-              <input id="loop-seconds" type="number" min="1" step="1" />
-            </label>
-            <button class="button accent" id="save-settings-button">Apply Risk Controls</button>
-          </article>
-        </aside>
-      </section>
+  <section class="settings-section">
+    <details class="disclosure" open><summary>Kraken Connection and Permissions</summary><div class="settings-grid">
+      <div><label>API Key <input id="kraken-api-key" type="password" autocomplete="off" /></label><label>API Secret <input id="kraken-api-secret" type="password" autocomplete="off" /></label><div class="button-row"><button class="button accent" id="save-credentials-button">Save Encrypted Keys</button><button class="button ghost" id="check-kraken-button">Test Connection</button></div></div>
+      <div class="readout-grid"><div><span>Held Asset</span><strong id="target-asset-symbol">QUID/USD</strong></div><div><span>Balance</span><strong id="target-asset-balance">0.00000000</strong></div><div><span>Value</span><strong id="target-asset-value">$0.00</strong></div><div><span>Status</span><strong id="target-asset-ready">Locked</strong></div><div class="span-two"><span>API Permissions</span><strong id="permission-status">Not checked</strong></div><button class="button ghost span-two" id="use-target-button">Include QUID Only</button></div>
+    </div></details>
 
-      <section class="tables-grid">
-        <article class="panel table-panel">
-          <h2>Deposits / Withdrawals</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Type</th><th>Amount</th><th>Note</th><th>Time</th></tr>
-              </thead>
-              <tbody id="transactions-table"></tbody>
-            </table>
-          </div>
-        </article>
+    <details class="disclosure"><summary>Risk and Timing</summary><div class="settings-grid three-column"><label>Maximum Per Trade ($) <input id="max-order" type="number" min="0" step="0.01" /></label><label>Minimum Confidence <input id="min-confidence" type="number" min="0" max="1" step="0.01" /></label><label>Seconds Between Cycles <input id="loop-seconds" type="number" min="1" step="1" /></label></div><button class="button compact accent" id="save-settings-button">Save Risk Settings</button></details>
 
-        <article class="panel table-panel">
-          <h2>Trades</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Symbol</th><th>Side</th><th>Quantity</th><th>Price</th><th>PnL</th></tr>
-              </thead>
-              <tbody id="trades-table"></tbody>
-            </table>
-          </div>
-        </article>
+    <details class="disclosure"><summary>Investment Tracking</summary><div class="settings-grid"><label>Amount <input id="ledger-amount" type="number" min="0" step="0.01" /></label><label>Note <input id="ledger-note" type="text" /></label></div><div class="button-row"><button class="button accent" id="deposit-button">Add Deposit</button><button class="button ghost" id="withdraw-button">Add Withdrawal</button></div></details>
 
-        <article class="panel table-panel">
-          <h2>Decision Journal</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Symbol</th><th>Signal</th><th>Confidence</th><th>Executed</th><th>Reason</th></tr>
-              </thead>
-              <tbody id="decisions-table"></tbody>
-            </table>
-          </div>
-        </article>
-
-        <article class="panel table-panel">
-          <h2>Strategy Performance</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Symbol</th><th>Strategy</th><th>Score</th><th>Profit</th><th>Win</th><th>DD</th><th>Trades</th></tr>
-              </thead>
-              <tbody id="strategies-table"></tbody>
-            </table>
-          </div>
-        </article>
-
-        <article class="panel table-panel alerts-panel">
-          <h2>Alerts</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Level</th><th>Message</th><th>Source</th><th>Time</th></tr>
-              </thead>
-              <tbody id="alerts-table"></tbody>
-            </table>
-          </div>
-        </article>
-      </section>
-
-      <p class="status-line" id="status-line">Ready</p>
-    </main>
-    <script src="/app.js"></script>
-  </body>
+    <details class="disclosure records-disclosure"><summary>Trading Records and Diagnostics</summary><div class="tables-grid">
+      <article class="table-panel"><h2>Trades</h2><div class="table-wrap"><table><thead><tr><th>Market</th><th>Side</th><th>Quantity</th><th>Price</th><th>PnL</th></tr></thead><tbody id="trades-table"></tbody></table></div></article>
+      <article class="table-panel"><h2>Strategy Performance</h2><div class="table-wrap"><table><thead><tr><th>Market</th><th>Strategy</th><th>Score</th><th>Profit</th><th>Win</th><th>DD</th><th>Trades</th></tr></thead><tbody id="strategies-table"></tbody></table></div></article>
+      <article class="table-panel"><h2>Decisions</h2><div class="table-wrap"><table><thead><tr><th>Market</th><th>Signal</th><th>Confidence</th><th>Executed</th><th>Reason</th></tr></thead><tbody id="decisions-table"></tbody></table></div></article>
+      <article class="table-panel"><h2>Alerts</h2><div class="table-wrap"><table><thead><tr><th>Level</th><th>Message</th><th>Source</th><th>Time</th></tr></thead><tbody id="alerts-table"></tbody></table></div></article>
+      <article class="table-panel"><h2>Deposits and Withdrawals</h2><div class="table-wrap"><table><thead><tr><th>Type</th><th>Amount</th><th>Note</th><th>Time</th></tr></thead><tbody id="transactions-table"></tbody></table></div></article>
+      <article class="table-panel"><h2>Paper / Live Comparison</h2><div class="table-wrap"><table><thead><tr><th>Market</th><th>Paper</th><th>Live</th><th>Price</th><th>Diff</th><th>Reason</th></tr></thead><tbody id="paper-live-table"></tbody></table></div></article>
+      <article class="table-panel"><h2>Shadow Validation</h2><div class="table-wrap"><table><thead><tr><th>Market</th><th>Signal</th><th>Entry</th><th>Exit</th><th>Valid</th><th>Net</th></tr></thead><tbody id="shadow-table"></tbody></table></div></article>
+      <article class="table-panel full-width"><h2>Audit Log</h2><div class="table-wrap"><table><thead><tr><th>Action</th><th>Detail</th><th>Source</th><th>Time</th></tr></thead><tbody id="audit-table"></tbody></table></div></article>
+    </div></details>
+  </section>
+  <p class="status-line" id="status-line" role="status" aria-live="polite">Ready</p>
+</main>
+<script src="/app.js"></script>
+</body>
 </html>

@@ -36,6 +36,20 @@ def test_ledger_uses_net_deposits_when_no_snapshot_exists(tmp_path):
     assert summary.net_growth == 0
 
 
+def test_ledger_can_exclude_paper_equity_from_real_account_value(tmp_path):
+    ledger = InvestmentLedger(tmp_path / "ledger.sqlite3")
+    ledger.add_deposit(10)
+    ledger.record_snapshot(8.5, source="kraken")
+    ledger.record_snapshot(10_000, source="browser_paper_trader")
+
+    summary = ledger.summary(snapshot_sources=("kraken",))
+    snapshots = ledger.snapshots(sources=("kraken",))
+
+    assert summary.current_value == 8.5
+    assert summary.net_growth == -1.5
+    assert [snapshot.total_value for snapshot in snapshots] == [8.5]
+
+
 def test_ledger_records_decisions_strategy_performance_alerts_and_settings(
     tmp_path,
 ):
@@ -85,3 +99,53 @@ def test_ledger_records_decisions_strategy_performance_alerts_and_settings(
     assert alert["level"] == "INFO"
     assert controls.max_order_notional == 250
     assert controls.emergency_stop is True
+
+
+def test_ledger_records_audit_and_paper_live_comparison(tmp_path):
+    ledger = InvestmentLedger(tmp_path / "ledger.sqlite3")
+
+    ledger.record_audit_event(
+        actor="tester",
+        action="settings_saved",
+        detail="Risk controls updated.",
+        source="unit",
+    )
+    ledger.record_paper_live_comparison(
+        symbol="BTC/USD",
+        paper_action="BUY",
+        live_action="LOCKED",
+        paper_price=50_000,
+        live_price=50_000,
+        difference=0,
+        reason="Deployment mode locked live trading.",
+    )
+
+    audit = ledger.audit_log()[0]
+    comparison = ledger.paper_live_comparisons()[0]
+
+    assert audit["actor"] == "tester"
+    assert audit["action"] == "settings_saved"
+    assert comparison["symbol"] == "BTC/USD"
+    assert comparison["live_action"] == "LOCKED"
+
+
+def test_ledger_resolves_shadow_observation_after_costs(tmp_path):
+    ledger = InvestmentLedger(tmp_path / "ledger.sqlite3")
+    ledger.record_shadow_observation(
+        symbol="BTC/USD",
+        action="BUY",
+        strategy="Momentum",
+        confidence=0.8,
+        entry_price=100.0,
+        quantity=1.0,
+        valid=True,
+        cost_rate=0.01,
+    )
+
+    assert ledger.resolve_shadow_observations("BTC/USD", 105.0) == 1
+    observation = ledger.shadow_observations()[0]
+
+    assert observation["exit_price"] == 105.0
+    assert round(observation["gross_return"], 6) == 0.05
+    assert round(observation["net_return"], 6) == 0.04
+    assert observation["resolved_at"] is not None
