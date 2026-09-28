@@ -109,6 +109,60 @@ def test_trader_isolates_market_failure_and_continues_cycle():
     assert trader.cycles == 1
 
 
+def test_trader_stops_between_markets_when_service_requests_stop():
+    trader = AutomatedKrakenTrader()
+    trader.symbols = ["BTC/USD", "ETH/USD"]
+    checked = []
+    trader._run_symbol = lambda symbol: checked.append(symbol) or trader._execute_signal(
+        symbol, signal(action="HOLD")
+    )
+    trader.stop_requested = lambda: bool(checked)
+
+    events = trader.run_once()
+
+    assert checked == ["BTC/USD"]
+    assert len(events) == 1
+    assert "stopped" in trader.last_cycle_note
+
+
+def test_trader_ends_cycle_after_time_budget(monkeypatch):
+    trader = AutomatedKrakenTrader()
+    trader.symbols = ["BTC/USD", "ETH/USD"]
+    trader.cycle_deadline_seconds = 1
+    checked = []
+    trader._run_symbol = lambda symbol: checked.append(symbol) or trader._execute_signal(
+        symbol, signal(action="HOLD")
+    )
+    times = iter([0, 0, 2])
+    monkeypatch.setattr("live.trader.time.monotonic", lambda: next(times))
+
+    events = trader.run_once()
+
+    assert checked == ["BTC/USD"]
+    assert len(events) == 1
+    assert "time budget" in trader.last_cycle_note
+
+
+def test_market_scan_stops_before_next_symbol_after_time_budget(monkeypatch):
+    trader = AutomatedKrakenTrader()
+    trader.cycle_deadline_seconds = 1
+    checked = []
+
+    def fetch(symbol):
+        checked.append(symbol)
+        raise RuntimeError("unavailable")
+
+    trader._fetch_market_frame = fetch
+    times = iter([0, 0, 2])
+    monkeypatch.setattr("live.trader.time.monotonic", lambda: next(times))
+
+    result = trader.scan_markets(["BTC/USD", "ETH/USD"])
+
+    assert result == []
+    assert checked == ["BTC/USD"]
+    assert "time budget" in trader.last_scan_note
+
+
 def test_shadow_mode_validates_buy_without_sending_order():
     class ShadowClient:
         def market(self, symbol):
@@ -139,3 +193,53 @@ def test_shadow_mode_validates_buy_without_sending_order():
     assert event.order_status == "validated"
     assert "no Kraken order sent" in event.reason
     assert "BTC/USD" in trader.last_order_previews
+
+
+def test_shadow_buy_ignores_paper_position_and_uses_kraken_balance():
+    class ShadowClient:
+        def market(self, symbol):
+            return {
+                "base": "BTC",
+                "quote": "USD",
+                "limits": {"amount": {"min": 0.0001}},
+            }
+
+        def fetch_balance(self):
+            return {"free": {"USD": 10}}
+
+        def amount_to_precision(self, symbol, quantity):
+            return f"{quantity:.4f}"
+
+        def create_market_order(self, *args, **kwargs):
+            raise AssertionError("Shadow mode must not submit an order.")
+
+    trader = AutomatedKrakenTrader(client=ShadowClient())
+    trader.positions.open_position(
+        "BTC/USD",
+        signal(price=100),
+        1,
+    )
+    trader.set_execution_mode("shadow")
+
+    event = trader._execute_signal(
+        "BTC/USD",
+        signal(price=50_000, confidence=0.95),
+    )
+
+    assert event.order_status == "validated"
+    assert event.executed is False
+    assert event.quantity == 0.0001
+    assert "no Kraken order sent" in event.reason
+
+
+def test_limited_live_blocks_buy_without_promoted_symbol():
+    trader = AutomatedKrakenTrader()
+    trader.set_execution_mode("limited_live")
+
+    event = trader._execute_signal(
+        "BTC/USD",
+        signal(price=100, confidence=0.95),
+    )
+
+    assert event.executed is False
+    assert "promotion gates" in event.reason

@@ -110,6 +110,7 @@ class LiveExecutionSafety:
         side: str,
         quantity: float,
         price: float,
+        fit_to_available: bool = False,
     ) -> OrderPreview:
         market = client.market(symbol)
         balance = client.fetch_balance()
@@ -119,11 +120,47 @@ class LiveExecutionSafety:
             ((market.get("limits") or {}).get("amount") or {}).get("min")
             or 0.0
         )
-        precise_quantity = float(client.amount_to_precision(symbol, quantity))
+        free = balance.get("free", {})
+        requested_quantity = float(quantity)
+        if fit_to_available and side.lower() == "buy":
+            available_quote = self._balance_amount(free, quote)
+            cost_multiplier = (
+                (1 + self.taker_fee_rate + self.slippage_rate)
+                * (1 + self.reserve_rate)
+            )
+            affordable_quantity = (
+                available_quote / cost_multiplier / float(price)
+                if price > 0 and cost_multiplier > 0
+                else 0.0
+            )
+            requested_quantity = min(
+                requested_quantity,
+                affordable_quantity,
+            )
+
+        precise_quantity = float(client.amount_to_precision(
+            symbol,
+            requested_quantity,
+        ))
+        if fit_to_available and side.lower() == "buy":
+            available_quote = self._balance_amount(free, quote)
+            for _ in range(32):
+                precise_notional = precise_quantity * float(price)
+                precise_required = (
+                    precise_notional
+                    * (1 + self.taker_fee_rate + self.slippage_rate)
+                    * (1 + self.reserve_rate)
+                )
+                if precise_required <= available_quote:
+                    break
+                requested_quantity *= 0.9
+                precise_quantity = float(client.amount_to_precision(
+                    symbol,
+                    requested_quantity,
+                ))
         notional = precise_quantity * float(price)
         fee = notional * self.taker_fee_rate
         slippage = notional * self.slippage_rate
-        free = balance.get("free", {})
         reasons = []
 
         if precise_quantity <= 0:

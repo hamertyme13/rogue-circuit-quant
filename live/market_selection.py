@@ -13,7 +13,13 @@ class MarketSelection:
 
 
 class DiversifiedMarketSelector:
-    def select(self, opportunities, limit: int) -> MarketSelection:
+    def select(
+        self,
+        opportunities,
+        limit: int,
+        health_by_symbol=None,
+    ) -> MarketSelection:
+        health_by_symbol = health_by_symbol or {}
         ranked = sorted(
             opportunities,
             key=lambda item: (float(item.score), float(item.confidence)),
@@ -25,8 +31,11 @@ class DiversifiedMarketSelector:
 
         for item in ranked:
             base = item.symbol.split("/")[0].upper()
+            health = health_by_symbol.get(item.symbol)
             reason = ""
-            if base in EXCLUDED_BASE_ASSETS:
+            if health is not None and health.status == "quarantined":
+                reason = "Rolling paper and shadow evidence quarantined this market."
+            elif base in EXCLUDED_BASE_ASSETS:
                 reason = "Cash and stablecoin bases are excluded."
             elif base in seen_bases:
                 reason = "Another quote market for this asset ranked higher."

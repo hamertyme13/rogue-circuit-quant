@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -442,6 +443,18 @@ class InvestmentLedger:
             return default
 
         return row["value"]
+
+    def set_json_setting(self, key: str, value):
+        self.set_setting(key, json.dumps(value, separators=(",", ":")))
+
+    def get_json_setting(self, key: str, default=None):
+        raw = self.get_setting(key, "")
+        if not raw:
+            return default
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return default
 
     def set_emergency_stop(self, enabled: bool):
 

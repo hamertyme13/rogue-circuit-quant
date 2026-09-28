@@ -159,7 +159,7 @@ class Portfolio:
 
     def daily_loss_percent(self):
 
-        loss = self.starting_balance - self.cash
+        loss = self.starting_balance - self.account_value()
 
         return max(
             0,

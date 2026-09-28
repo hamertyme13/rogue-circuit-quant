@@ -1,4 +1,7 @@
+from datetime import datetime, timezone
+
 from live.trader import MarketOpportunity
+from models.signal import Signal
 from web_app import WebCommandCenter
 
 
@@ -179,3 +182,44 @@ def test_market_scan_selects_multiple_ranked_paper_symbols(tmp_path):
     assert len(state["market_opportunities"]) == 4
     assert len(state["service"]["symbols"]) == 3
     assert command_center.ledger.get_setting("live_symbols", "")
+
+
+def test_market_scan_retains_open_paper_symbol(tmp_path):
+    command_center = center(tmp_path)
+    command_center.client = FakeKrakenClient()
+    command_center.trader.client = command_center.client
+    command_center.trader.positions.open_position(
+        "QUID/USD",
+        Signal(
+            timestamp=datetime.now(timezone.utc),
+            action="BUY",
+            price=0.05,
+            confidence=0.9,
+            strategy="Momentum",
+        ),
+        10,
+    )
+    command_center.trader.scan_markets = lambda symbols: [
+        MarketOpportunity(
+            rank=index,
+            symbol=symbol,
+            action="BUY",
+            confidence=0.8,
+            price=10.0,
+            strategy="Momentum",
+            score=100 - index,
+            net_profit=25.0,
+            win_rate=0.6,
+            drawdown=0.04,
+            trades=10,
+        )
+        for index, symbol in enumerate(symbols, start=1)
+    ]
+
+    state = command_center.scan_market_opportunities({
+        "scan_limit": 4,
+        "active_limit": 3,
+    })
+
+    assert "QUID/USD" in state["service"]["symbols"]
+    assert len(state["service"]["symbols"]) == 3

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 from live.market_selection import DiversifiedMarketSelector
+from live.market_health import MarketHealthProfile
 
 
 @dataclass
@@ -37,3 +38,28 @@ def test_selector_rejects_market_without_test_trades():
 
     assert result.selected == ()
     assert "no completed trades" in result.rejected[0]["reason"]
+
+
+def test_selector_rejects_high_score_when_history_quarantines_market():
+    health = MarketHealthProfile(
+        symbol="BTC/USD",
+        status="quarantined",
+        samples=10,
+        wins=2,
+        win_rate=0.2,
+        average_shadow_return=-0.03,
+        paper_pnl=-5.0,
+        reason="Weak rolling outcomes.",
+    )
+
+    result = DiversifiedMarketSelector().select(
+        [
+            Opportunity("BTC/USD", 500, 0.95, 20),
+            Opportunity("ETH/USD", 100, 0.75, 10),
+        ],
+        limit=2,
+        health_by_symbol={"BTC/USD": health},
+    )
+
+    assert result.selected == ("ETH/USD",)
+    assert "quarantined" in result.rejected[0]["reason"]

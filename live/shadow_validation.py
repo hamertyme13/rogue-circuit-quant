@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class ShadowValidationConfig:
     min_samples: int = 25
+    evidence_window: int = 25
     min_valid_rate: float = 0.90
     min_profitable_rate: float = 0.50
     max_cost_rate: float = 0.02
@@ -30,8 +31,11 @@ class ShadowTradingValidator:
 
     def evaluate(self, observations) -> ShadowValidationReport:
         rows = [dict(row) for row in observations]
-        resolved = [row for row in rows if row.get("resolved_at")]
-        valid = [row for row in rows if bool(row.get("valid"))]
+        resolved = [
+            row for row in rows if row.get("resolved_at")
+        ][:self.config.evidence_window]
+        rows = resolved
+        valid = [row for row in resolved if bool(row.get("valid"))]
         profitable = [
             row for row in resolved
             if float(row.get("net_return") or 0.0) > 0

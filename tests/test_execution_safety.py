@@ -81,3 +81,24 @@ def test_order_preview_checks_minimum_fees_slippage_and_balance():
     assert any("minimum" in reason for reason in too_small.reasons)
     assert insufficient.valid is False
     assert "only" in insufficient.reasons[0]
+
+
+def test_shadow_preview_fits_order_to_available_quote_balance():
+    safety = LiveExecutionSafety(
+        taker_fee_rate=0.008,
+        slippage_rate=0.002,
+        reserve_rate=0.05,
+    )
+
+    preview = safety.preview(
+        FakeClient(usd=10),
+        "BTC/USD",
+        "buy",
+        0.01,
+        50_000,
+        fit_to_available=True,
+    )
+
+    assert preview.valid is True
+    assert preview.quantity == 0.0001
+    assert preview.required_balance <= preview.available_balance

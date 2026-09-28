@@ -73,10 +73,12 @@ function render(state) {
   renderSystem(state);
   renderExecutionSafety(state.execution_safety, state.live_readiness);
   renderDailySchedule(state.daily_schedule || {});
+  renderPaperRuntime(state.paper_runtime || {});
   document.getElementById("bot-symbols").textContent = state.service.symbols.join(", ");
   renderWorkflow(state);
   renderServiceHealth(state.service);
   renderControls(state.controls);
+  renderAllocation(state.allocation || {});
   renderChart(state.chart_data?.equity_curve || state.snapshots);
   renderRows("transactions-table", state.transactions, [
     ["type"],
@@ -134,6 +136,23 @@ function render(state) {
     ["exit_price", (value) => value == null ? "Pending" : money(value)],
     ["valid", yesNo],
     ["net_return", (value) => value == null ? "Pending" : ratio(value)],
+  ]);
+  renderRows("market-health-table", state.market_health || [], [
+    ["symbol"],
+    ["status"],
+    ["samples"],
+    ["win_rate", ratio],
+    ["average_shadow_return", ratio],
+    ["paper_pnl", money],
+  ]);
+  renderRows("live-candidates-table", state.live_candidates || [], [
+    ["symbol"],
+    ["eligible", yesNo],
+    ["health_status"],
+    ["resolved_samples"],
+    ["valid_rate", ratio],
+    ["profitable_rate", ratio],
+    ["average_net_return", ratio],
   ]);
   renderRows("opportunities-table", state.market_opportunities || [], [
     ["rank"],
@@ -210,7 +229,7 @@ function renderServiceHealth(service) {
     detail.textContent = `Retrying after error: ${service.last_error || "Unknown error"}`;
     detail.dataset.tone = "error";
   } else if (service.last_success_at) {
-    detail.textContent = `Last successful cycle: ${shortDate(service.last_success_at)}`;
+    detail.textContent = `Last completed run: ${shortDate(service.last_success_at)}`;
     detail.dataset.tone = "success";
   } else {
     detail.textContent = service.running ? "First cycle is running." : "Waiting to start.";
@@ -272,6 +291,17 @@ function renderControls(controls) {
   document.getElementById("loop-seconds").value = controls.loop_seconds;
 }
 
+function renderAllocation(allocation) {
+  document.getElementById("allocation-open").textContent = `${allocation.open_positions || 0} / ${allocation.max_open_positions || 3}`;
+  document.getElementById("allocation-invested").textContent = money(allocation.invested || 0);
+  document.getElementById("allocation-exposure").textContent = ratio(allocation.exposure || 0);
+  document.getElementById("allocation-reserve").textContent = ratio(allocation.min_cash_reserve || 0);
+  document.getElementById("max-open-positions").value = allocation.max_open_positions || 3;
+  document.getElementById("max-portfolio-exposure").value = Number(allocation.max_portfolio_exposure || 0.30) * 100;
+  document.getElementById("max-asset-exposure").value = Number(allocation.max_asset_exposure || 0.10) * 100;
+  document.getElementById("min-cash-reserve").value = Number(allocation.min_cash_reserve || 0.20) * 100;
+}
+
 function renderDailySchedule(schedule) {
   document.getElementById("daily-enabled").checked = Boolean(schedule.enabled);
   document.getElementById("daily-time").value = schedule.time || "09:00";
@@ -279,9 +309,17 @@ function renderDailySchedule(schedule) {
   document.getElementById("daily-auto-scan").checked = schedule.auto_scan !== false;
   document.getElementById("daily-scan-limit").value = schedule.scan_limit || 8;
   document.getElementById("daily-active-limit").value = schedule.active_limit || 3;
+  document.getElementById("daily-auto-shadow").checked = schedule.auto_shadow !== false;
+  document.getElementById("daily-shadow-cycles").value = schedule.shadow_cycles || 3;
   document.getElementById("daily-schedule-detail").textContent = schedule.enabled
-    ? `Next session: ${shortDate(schedule.next_run)} | ${schedule.cycles} cycles. ${schedule.last_result || ""}`
+    ? `Next session: ${shortDate(schedule.next_run)} | ${schedule.cycles} paper cycles${schedule.auto_shadow === false ? "" : ` + ${schedule.shadow_cycles || 3} no-order shadow cycles`}. ${schedule.last_result || ""}`
     : "Schedule is off. Enable it to collect paper evidence every day.";
+}
+
+function renderPaperRuntime(runtime) {
+  document.getElementById("paper-runtime-detail").textContent = runtime.restored
+    ? `Paper history saved | ${runtime.cycles || 0} qualified cycles | ${runtime.unverified_cycles || 0} unverified runs | ${runtime.legacy_cycles || 0} legacy cycles | ${runtime.open_positions || 0} open | ${runtime.closed_trades || 0} closed`
+    : "Paper history will be saved after the next completed paper cycle.";
 }
 
 function renderChart(snapshots) {
@@ -432,6 +470,10 @@ function settingsPayload() {
     max_order_notional: document.getElementById("max-order").value,
     min_signal_confidence: document.getElementById("min-confidence").value,
     loop_seconds: document.getElementById("loop-seconds").value,
+    max_open_positions: document.getElementById("max-open-positions").value,
+    max_portfolio_exposure: Number(document.getElementById("max-portfolio-exposure").value) / 100,
+    max_asset_exposure: Number(document.getElementById("max-asset-exposure").value) / 100,
+    min_cash_reserve: Number(document.getElementById("min-cash-reserve").value) / 100,
   };
 }
 
@@ -443,6 +485,8 @@ function dailySchedulePayload() {
     auto_scan: document.getElementById("daily-auto-scan").checked,
     scan_limit: document.getElementById("daily-scan-limit").value,
     active_limit: document.getElementById("daily-active-limit").value,
+    auto_shadow: document.getElementById("daily-auto-shadow").checked,
+    shadow_cycles: document.getElementById("daily-shadow-cycles").value,
   };
 }
 

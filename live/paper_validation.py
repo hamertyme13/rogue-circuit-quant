@@ -47,19 +47,20 @@ class PaperTradingValidator:
         portfolio: Portfolio,
         events: list[TradeCycleEvent],
         cycles: int,
+        evidence: dict | None = None,
     ) -> PaperValidationReport:
 
         closed_trades = len(portfolio.closed_trades)
-        executed_events = len([
-            event
-            for event in events
-            if event.executed
-        ])
-        opportunity_events = len([
-            event
-            for event in events
-            if event.opportunity
-        ])
+        if evidence is None:
+            total_events = len(events)
+            executed_events = len([event for event in events if event.executed])
+            opportunity_events = len([
+                event for event in events if event.opportunity
+            ])
+        else:
+            total_events = int(evidence.get("total_events", 0))
+            executed_events = int(evidence.get("executed_events", 0))
+            opportunity_events = int(evidence.get("opportunity_events", 0))
         starting_balance = float(portfolio.starting_balance)
         ending_equity = float(portfolio.account_value())
         growth = ending_equity - starting_balance
@@ -69,8 +70,8 @@ class PaperTradingValidator:
             else 0.0
         )
         opportunity_rate = (
-            opportunity_events / len(events)
-            if events
+            opportunity_events / total_events
+            if total_events
             else 0.0
         )
         max_drawdown = float(portfolio.drawdown_percent())

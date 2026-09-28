@@ -6,7 +6,11 @@ Responsible only for communicating with Kraken.
 
 import ccxt
 
-from config import KRAKEN_API_KEY, KRAKEN_API_SECRET
+from config import (
+    KRAKEN_API_KEY,
+    KRAKEN_API_SECRET,
+    KRAKEN_REQUEST_TIMEOUT_SECONDS,
+)
 
 
 class KrakenClient:
@@ -19,6 +23,8 @@ class KrakenClient:
 
         options = {
             "enableRateLimit": True,
+            "timeout": max(1, int(KRAKEN_REQUEST_TIMEOUT_SECONDS * 1000)),
+            "maxRetriesOnFailure": 0,
         }
 
         key = api_key or KRAKEN_API_KEY

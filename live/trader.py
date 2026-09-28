@@ -9,6 +9,7 @@ from ai.strategy_analysis import StrategyAnalyst, StrategyDecision
 from config import (
     ALLOW_LIVE_TRADING,
     LIVE_CANDLE_LIMIT,
+    MARKET_CYCLE_DEADLINE_SECONDS,
     LIVE_CASH_RESERVE_RATE,
     LIVE_LOOP_SECONDS,
     LIVE_SLIPPAGE_RATE,
@@ -16,6 +17,10 @@ from config import (
     LIVE_TAKER_FEE_RATE,
     LIVE_TIMEFRAME,
     MAX_ORDER_NOTIONAL,
+    MAX_OPEN_POSITIONS,
+    MAX_PORTFOLIO_EXPOSURE,
+    MAX_ASSET_EXPOSURE,
+    MIN_CASH_RESERVE,
     MIN_SIGNAL_CONFIDENCE,
     OPPORTUNITY_MIN_CONFIDENCE,
     OPPORTUNITY_MIN_NET_PROFIT,
@@ -32,6 +37,7 @@ from risk.kill_switch import KillSwitch
 from risk.position_manager import PositionManager
 from risk.position_size import PositionSizer
 from risk.risk_manager import RiskManager
+from risk.allocation import PortfolioAllocator
 from live.execution_safety import (
     EXECUTION_MODES,
     LIMITED_LIVE,
@@ -102,6 +108,12 @@ class AutomatedKrakenTrader:
         self.optimizer = StrategyOptimizer()
         self.portfolio = Portfolio(STARTING_BALANCE)
         self.risk = RiskManager(self.portfolio)
+        self.allocator = PortfolioAllocator(
+            max_open_positions=MAX_OPEN_POSITIONS,
+            max_portfolio_exposure=MAX_PORTFOLIO_EXPOSURE,
+            max_asset_exposure=MAX_ASSET_EXPOSURE,
+            min_cash_reserve=MIN_CASH_RESERVE,
+        )
         self.sizer = PositionSizer()
         self.positions = PositionManager(self.portfolio)
         self.kill_switch = KillSwitch()
@@ -124,6 +136,12 @@ class AutomatedKrakenTrader:
             reserve_rate=LIVE_CASH_RESERVE_RATE,
         )
         self.last_order_previews = {}
+        self.last_allocation_decisions = {}
+        self.live_symbol_allowlist = set()
+        self.stop_requested = lambda: False
+        self.cycle_deadline_seconds = MARKET_CYCLE_DEADLINE_SECONDS
+        self.last_cycle_note = ""
+        self.last_scan_note = ""
 
     def run_forever(self):
 
@@ -136,6 +154,8 @@ class AutomatedKrakenTrader:
             time.sleep(self.loop_seconds)
 
     def run_once(self) -> list[TradeCycleEvent]:
+
+        self.last_cycle_note = ""
 
         if self.kill_switch.active():
             return [
@@ -152,8 +172,17 @@ class AutomatedKrakenTrader:
             ]
 
         events = []
+        deadline = time.monotonic() + self.cycle_deadline_seconds
 
         for symbol in self.symbols:
+            if self.stop_requested():
+                self.last_cycle_note = "Cycle stopped before all markets were checked."
+                break
+            if time.monotonic() >= deadline:
+                self.last_cycle_note = (
+                    "Cycle time budget reached before all markets were checked."
+                )
+                break
             try:
                 events.append(self._run_symbol(symbol))
             except Exception as exc:
@@ -200,8 +229,18 @@ class AutomatedKrakenTrader:
     def scan_markets(self, symbols: list[str]) -> list[MarketOpportunity]:
 
         opportunities = []
+        self.last_scan_note = ""
+        deadline = time.monotonic() + self.cycle_deadline_seconds
 
         for symbol in symbols:
+            if self.stop_requested():
+                self.last_scan_note = "Market scan stopped before all markets were checked."
+                break
+            if time.monotonic() >= deadline:
+                self.last_scan_note = (
+                    "Market scan time budget reached before all markets were checked."
+                )
+                break
             try:
                 df = self._fetch_market_frame(symbol)
                 decision = self._optimize(symbol, df)
@@ -343,7 +382,27 @@ class AutomatedKrakenTrader:
 
     def _buy(self, symbol: str, signal) -> TradeCycleEvent:
 
-        if not self.risk.can_open_trade():
+        if self.mode == LIMITED_LIVE and symbol not in self.live_symbol_allowlist:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                reason="Live buy blocked: market has not passed promotion gates.",
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        if self.mode == SHADOW:
+            return self._shadow_buy(symbol, signal)
+
+        if not self.risk.can_open_trade(
+            symbol,
+            enforce_position_limit=False,
+        ):
             self.console.print(
                 f"{symbol} buy skipped by risk controls"
             )
@@ -354,7 +413,8 @@ class AutomatedKrakenTrader:
                 price=signal.price,
                 strategy=signal.strategy,
                 executed=False,
-                reason="Risk controls blocked the buy.",
+                reason="Risk controls blocked the buy: market already open, "
+                "position limit reached, or loss guard active.",
                 mode=self.mode,
                 opportunity=self._is_opportunity(symbol, signal),
                 opportunity_reason=self._opportunity_reason(symbol),
@@ -368,6 +428,27 @@ class AutomatedKrakenTrader:
             quantity,
             self.max_order_notional / signal.price,
         )
+        allocation = self.allocator.allocate(
+            self.portfolio,
+            symbol,
+            quantity * signal.price,
+            self.max_order_notional,
+        )
+        self.last_allocation_decisions[symbol] = allocation.as_dict()
+        if not allocation.allowed:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                reason=f"Allocation blocked: {allocation.reason}",
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+        quantity = allocation.approved_notional / signal.price
 
         if self.mode == PAPER:
             self.positions.open_position(
@@ -412,28 +493,6 @@ class AutomatedKrakenTrader:
                 quantity=preview.quantity,
                 order_id=preview.client_order_id,
                 reason="Order preview blocked: " + " ".join(preview.reasons),
-                mode=self.mode,
-                opportunity=self._is_opportunity(symbol, signal),
-                opportunity_reason=self._opportunity_reason(symbol),
-            )
-
-        if self.mode == SHADOW:
-            return TradeCycleEvent(
-                symbol=symbol,
-                action=signal.action,
-                confidence=signal.confidence,
-                price=signal.price,
-                strategy=signal.strategy,
-                executed=False,
-                quantity=preview.quantity,
-                order_id=preview.client_order_id,
-                order_status="validated",
-                reason=(
-                    f"Shadow BUY validated; no Kraken order sent. "
-                    f"Estimated fee={preview.estimated_fee:.8f} "
-                    f"{preview.balance_asset}, slippage="
-                    f"{preview.estimated_slippage:.8f}."
-                ),
                 mode=self.mode,
                 opportunity=self._is_opportunity(symbol, signal),
                 opportunity_reason=self._opportunity_reason(symbol),
@@ -487,6 +546,56 @@ class AutomatedKrakenTrader:
             order_id=order_id,
             order_status=order_status,
             reason="Live buy filled and tracked.",
+            mode=self.mode,
+            opportunity=self._is_opportunity(symbol, signal),
+            opportunity_reason=self._opportunity_reason(symbol),
+        )
+
+    def _shadow_buy(self, symbol: str, signal) -> TradeCycleEvent:
+        quantity = self.max_order_notional / signal.price
+        preview = self.execution_safety.preview(
+            self.client,
+            symbol,
+            "buy",
+            quantity,
+            signal.price,
+            fit_to_available=True,
+        )
+        self.last_order_previews[symbol] = preview.as_dict()
+
+        if not preview.valid:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                reason="Shadow preview blocked: " + " ".join(preview.reasons),
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
+        return TradeCycleEvent(
+            symbol=symbol,
+            action=signal.action,
+            confidence=signal.confidence,
+            price=signal.price,
+            strategy=signal.strategy,
+            executed=False,
+            quantity=preview.quantity,
+            order_id=preview.client_order_id,
+            order_status="validated",
+            reason=(
+                "Shadow BUY validated against Kraken balance and rules; "
+                "no Kraken order sent. "
+                f"Estimated fee={preview.estimated_fee:.8f} "
+                f"{preview.balance_asset}, slippage="
+                f"{preview.estimated_slippage:.8f}."
+            ),
             mode=self.mode,
             opportunity=self._is_opportunity(symbol, signal),
             opportunity_reason=self._opportunity_reason(symbol),

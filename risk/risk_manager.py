@@ -11,9 +11,19 @@ class RiskManager:
 
         self.portfolio = portfolio
 
-    def can_open_trade(self):
+    def can_open_trade(
+        self,
+        symbol: str = "",
+        enforce_position_limit: bool = True,
+    ):
 
-        if self.portfolio.open_positions() >= MAX_OPEN_POSITIONS:
+        if symbol and self.portfolio.has_open_position_for(symbol):
+            return False
+
+        if (
+            enforce_position_limit
+            and self.portfolio.open_positions() >= MAX_OPEN_POSITIONS
+        ):
             return False
 
         if self.portfolio.daily_loss_percent() >= MAX_DAILY_LOSS:

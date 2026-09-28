@@ -11,6 +11,8 @@ class DailyScheduleStatus:
     auto_scan: bool
     scan_limit: int
     active_limit: int
+    auto_shadow: bool
+    shadow_cycles: int
     last_run_date: str
     last_started_at: str
     last_result: str
@@ -28,11 +30,15 @@ class DailyPaperScheduler:
         self._last_started_at = ""
         self._last_result = "Waiting for the next scheduled paper session."
 
-    def start(self):
+    def start(self, initial_delay_seconds: float = 0):
         if self._thread is not None and self._thread.is_alive():
             return False
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(
+            target=self._run,
+            args=(initial_delay_seconds,),
+            daemon=True,
+        )
         self._thread.start()
         return True
 
@@ -78,13 +84,17 @@ class DailyPaperScheduler:
                 auto_scan=settings.get("auto_scan", True),
                 scan_limit=settings.get("scan_limit", 8),
                 active_limit=settings.get("active_limit", 3),
+                auto_shadow=settings.get("auto_shadow", True),
+                shadow_cycles=settings.get("shadow_cycles", 3),
                 last_run_date=settings["last_run_date"],
                 last_started_at=self._last_started_at,
                 last_result=self._last_result,
                 next_run=next_run,
             ))
 
-    def _run(self):
+    def _run(self, initial_delay_seconds: float = 0):
+        if self._stop_event.wait(initial_delay_seconds):
+            return
         while not self._stop_event.is_set():
             try:
                 self.tick()

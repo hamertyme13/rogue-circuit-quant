@@ -78,6 +78,9 @@ class TradingBotService:
             and self._thread.is_alive()
         )
 
+    def stop_requested(self) -> bool:
+        return self._stop_event.is_set() and self.is_running()
+
     def status(self) -> dict:
 
         with self._state_lock:

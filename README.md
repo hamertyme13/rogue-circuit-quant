@@ -122,6 +122,8 @@ Useful environment variables:
 - `ROGUE_QUANT_TARGET_ASSET`: target balance asset, defaults to `QUID`
 - `ROGUE_QUANT_TARGET_SYMBOL`: target market, defaults to `QUID/USD`
 - `ROGUE_QUANT_LIVE_SYMBOLS`: comma-separated bot symbols, defaults to `BTC/USD`
+- `ROGUE_QUANT_KRAKEN_REQUEST_TIMEOUT_SECONDS`: Kraken request timeout, default `8`
+- `ROGUE_QUANT_MARKET_CYCLE_DEADLINE_SECONDS`: scan and cycle soft budget, default `90`
 - `ROGUE_QUANT_WEBHOOK_URL`: optional JSON webhook for critical alerts
 - `ROGUE_QUANT_EMAIL_TO`: placeholder email route for future SMTP delivery
 - `ROGUE_QUANT_OPPORTUNITY_MIN_CONFIDENCE`: BUY signal confidence threshold
@@ -133,6 +135,10 @@ Useful environment variables:
 - `ROGUE_QUANT_SHADOW_VALIDATION_MIN_PROFITABLE_RATE`: minimum profitable-after-cost outcome rate (default `0.50`)
 - `ROGUE_QUANT_SHADOW_VALIDATION_MAX_COST_RATE`: maximum average estimated fee and slippage rate (default `0.02`)
 - `ROGUE_QUANT_SHADOW_VALIDATION_MIN_AVERAGE_RETURN`: minimum average shadow return after estimated costs (default `0`)
+- `ROGUE_QUANT_LIVE_CANDIDATE_MIN_SHADOW_SAMPLES`: resolved shadow samples required for each live candidate (default `5`)
+- `ROGUE_QUANT_LIVE_CANDIDATE_MIN_VALID_RATE`: minimum Kraken-valid preview rate per candidate (default `0.90`)
+- `ROGUE_QUANT_LIVE_CANDIDATE_MIN_PROFITABLE_RATE`: minimum profitable-after-cost rate per candidate (default `0.50`)
+- `ROGUE_QUANT_LIVE_CANDIDATE_MIN_AVERAGE_RETURN`: minimum average shadow return per candidate (default `0`)
 - `ROGUE_QUANT_ALLOW_LIVE_TRADING`: explicit live-order unlock; defaults false
 - `ROGUE_QUANT_LIVE_TAKER_FEE_RATE`: fee estimate used by order previews
 - `ROGUE_QUANT_LIVE_SLIPPAGE_RATE`: slippage reserve used by order previews
