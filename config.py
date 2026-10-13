@@ -65,6 +65,10 @@ ALLOW_LIVE_TRADING = os.getenv(
     "false",
 ).lower() in {"1", "true", "yes"}
 
+# Hard ceiling for the first limited-live rollout; paper sizing remains separate.
+LIMITED_LIVE_MAX_ORDER_NOTIONAL = 10.0
+LIMITED_LIVE_MAX_SESSION_ORDERS = 2
+
 EXECUTION_MODE = os.getenv("ROGUE_QUANT_EXECUTION_MODE", "paper").lower()
 
 LIVE_TAKER_FEE_RATE = float(

@@ -1,4 +1,7 @@
+import sqlite3
+
 from accounting.ledger import InvestmentLedger
+from live.shadow_validation import ShadowTradingValidator, ShadowValidationConfig
 
 
 def test_ledger_tracks_net_deposits_and_growth(tmp_path):
@@ -140,6 +143,7 @@ def test_ledger_resolves_shadow_observation_after_costs(tmp_path):
         quantity=1.0,
         valid=True,
         cost_rate=0.01,
+        preview_version=2,
     )
 
     assert ledger.resolve_shadow_observations("BTC/USD", 105.0) == 1
@@ -149,3 +153,69 @@ def test_ledger_resolves_shadow_observation_after_costs(tmp_path):
     assert round(observation["gross_return"], 6) == 0.05
     assert round(observation["net_return"], 6) == 0.04
     assert observation["resolved_at"] is not None
+    assert observation["preview_version"] == 2
+
+
+def test_legacy_shadow_rows_remain_visible_but_do_not_pass_new_gate(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute("""
+            CREATE TABLE shadow_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL, action TEXT NOT NULL,
+                strategy TEXT NOT NULL, confidence REAL NOT NULL,
+                entry_price REAL NOT NULL, exit_price REAL,
+                quantity REAL NOT NULL, valid INTEGER NOT NULL,
+                cost_rate REAL NOT NULL, gross_return REAL,
+                net_return REAL, reason TEXT NOT NULL,
+                created_at TEXT NOT NULL, resolved_at TEXT
+            )
+        """)
+        conn.execute("""
+            INSERT INTO shadow_observations (
+                symbol, action, strategy, confidence, entry_price,
+                quantity, valid, cost_rate, net_return, reason,
+                created_at, resolved_at
+            ) VALUES ('BTC/USD','BUY','Momentum',0.8,100,0,0,0,0.05,
+                'Risk controls blocked the buy.','2026-08-01','2026-08-02')
+        """)
+
+    ledger = InvestmentLedger(path)
+    rows = ledger.shadow_observations()
+    report = ShadowTradingValidator(
+        ShadowValidationConfig(min_samples=1)
+    ).evaluate(rows)
+    assert len(rows) == 1
+    assert rows[0]["preview_version"] == 0
+    assert report.resolved_samples == 0
+    assert report.passed is False
+
+    ledger.record_shadow_observation(
+        symbol="BTC/USD", action="BUY", strategy="Momentum",
+        confidence=0.8, entry_price=100, quantity=0.05,
+        valid=True, cost_rate=0.01,
+        preview_version=2,
+    )
+    ledger.resolve_shadow_observations("BTC/USD", 102)
+    rows = ledger.shadow_observations()
+    assert [row["preview_version"] for row in rows] == [2, 0]
+    assert ShadowTradingValidator(
+        ShadowValidationConfig(min_samples=1)
+    ).evaluate(rows).resolved_samples == 1
+
+
+def test_live_order_journal_survives_restart_and_mode_change(tmp_path):
+    path = tmp_path / "ledger.sqlite3"
+    ledger = InvestmentLedger(path)
+    ledger.begin_live_order("session-a", "ca-1", "BTC/USD", "buy", 0.01, 2)
+    assert "unresolved" in ledger.live_order_block_reason("session-a", 2)
+
+    reopened = InvestmentLedger(path)
+    assert "unresolved" in reopened.live_order_block_reason("session-b", 2)
+    reopened.update_live_order("ca-1", "observed", "kraken-order-1")
+    assert reopened.live_order_intents()[0]["order_id"] == "kraken-order-1"
+    assert "prior-session" in reopened.live_order_block_reason("session-b", 2)
+
+    reopened.begin_live_order("session-a", "ca-2", "BTC/USD", "sell", 0.01, 2)
+    reopened.update_live_order("ca-2", "observed", "kraken-order-2")
+    assert "session order limit" in reopened.live_order_block_reason("session-a", 2)

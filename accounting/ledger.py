@@ -351,19 +351,21 @@ class InvestmentLedger:
         valid: bool,
         cost_rate: float,
         reason: str = "",
+        preview_version: int = 0,
     ):
         with self._connect() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO shadow_observations (
                     symbol, action, strategy, confidence, entry_price,
-                    quantity, valid, cost_rate, reason, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    quantity, valid, cost_rate, reason, created_at,
+                    preview_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     symbol, action.upper(), strategy, float(confidence),
                     float(entry_price), float(quantity), int(valid),
-                    float(cost_rate), reason, self._now(),
+                    float(cost_rate), reason, self._now(), int(preview_version),
                 ),
             )
             return cursor.lastrowid
@@ -778,13 +780,83 @@ class InvestmentLedger:
                 """
                 SELECT symbol, action, strategy, confidence, entry_price,
                        exit_price, quantity, valid, cost_rate, gross_return,
-                       net_return, reason, created_at, resolved_at
+                       net_return, reason, created_at, resolved_at,
+                       preview_version
                 FROM shadow_observations
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
+
+    def live_order_block_reason(
+        self, session_id: str | None, max_session_orders: int,
+    ) -> str:
+        with self._connect() as conn:
+            return self._live_order_block_reason(
+                conn, session_id, max_session_orders,
+            )
+
+    def begin_live_order(
+        self, session_id: str, client_order_id: str, symbol: str,
+        side: str, quantity: float, max_session_orders: int,
+    ):
+        if not session_id or not client_order_id:
+            raise RuntimeError("Live order requires a durable session and client ID.")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            reason = self._live_order_block_reason(
+                conn, session_id, max_session_orders,
+            )
+            if reason:
+                raise RuntimeError(reason)
+            now = self._now()
+            conn.execute(
+                """
+                INSERT INTO live_order_intents (
+                    client_order_id, session_id, symbol, side, quantity,
+                    status, order_id, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'pending', '', ?, ?)
+                """,
+                (client_order_id, session_id, symbol, side,
+                 float(quantity), now, now),
+            )
+
+    def update_live_order(
+        self, client_order_id: str, status: str, order_id: str = "",
+    ):
+        if status not in {"observed", "uncertain"}:
+            raise ValueError("Unsupported live order journal status.")
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE live_order_intents
+                SET status = ?, order_id = ?, updated_at = ?
+                WHERE client_order_id = ? AND status = 'pending'
+                """,
+                (status, order_id, self._now(), client_order_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Live order intent could not be updated.")
+
+    def live_order_intents(self):
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM live_order_intents ORDER BY created_at DESC"
+            ).fetchall()
+
+    @staticmethod
+    def _live_order_block_reason(conn, session_id, max_session_orders):
+        rows = conn.execute(
+            "SELECT session_id, status FROM live_order_intents"
+        ).fetchall()
+        if any(row["status"] in {"pending", "uncertain"} for row in rows):
+            return "Live orders are locked until an unresolved Kraken submission is reconciled."
+        if any(row["session_id"] != session_id for row in rows):
+            return "Live orders are locked until prior-session orders are reconciled."
+        if sum(row["session_id"] == session_id for row in rows) >= max_session_orders:
+            return "Live orders are locked: session order limit reached."
+        return ""
 
     def _add_transaction(
         self,
@@ -960,7 +1032,33 @@ class InvestmentLedger:
                     net_return REAL,
                     reason TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    resolved_at TEXT
+                    resolved_at TEXT,
+                    preview_version INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            columns = {
+                row["name"] for row in conn.execute(
+                    "PRAGMA table_info(shadow_observations)"
+                )
+            }
+            if "preview_version" not in columns:
+                conn.execute(
+                    "ALTER TABLE shadow_observations "
+                    "ADD COLUMN preview_version INTEGER NOT NULL DEFAULT 0"
+                )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS live_order_intents (
+                    client_order_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    side TEXT NOT NULL,
+                    quantity REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    order_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )

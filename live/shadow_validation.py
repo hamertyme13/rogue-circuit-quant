@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
 
+from live.execution_safety import SHADOW_EXCHANGE_PREVIEW_VERSION
+
 
 @dataclass(frozen=True)
 class ShadowValidationConfig:
@@ -15,6 +17,7 @@ class ShadowValidationConfig:
 class ShadowValidationReport:
     samples: int
     resolved_samples: int
+    legacy_samples: int
     valid_samples: int
     profitable_samples: int
     valid_rate: float
@@ -31,8 +34,13 @@ class ShadowTradingValidator:
 
     def evaluate(self, observations) -> ShadowValidationReport:
         rows = [dict(row) for row in observations]
+        legacy_samples = sum(
+            1 for row in rows
+            if row.get("resolved_at") and row.get("preview_version") != SHADOW_EXCHANGE_PREVIEW_VERSION
+        )
         resolved = [
-            row for row in rows if row.get("resolved_at")
+            row for row in rows
+            if row.get("resolved_at") and row.get("preview_version") == SHADOW_EXCHANGE_PREVIEW_VERSION
         ][:self.config.evidence_window]
         rows = resolved
         valid = [row for row in resolved if bool(row.get("valid"))]
@@ -66,6 +74,7 @@ class ShadowTradingValidator:
         return ShadowValidationReport(
             samples=samples,
             resolved_samples=resolved_samples,
+            legacy_samples=legacy_samples,
             valid_samples=len(valid),
             profitable_samples=len(profitable),
             valid_rate=valid_rate,

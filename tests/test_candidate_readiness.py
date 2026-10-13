@@ -21,6 +21,7 @@ def _observation(symbol, value=0.02, valid=1):
         "valid": valid,
         "net_return": value,
         "resolved_at": "2026-09-01T00:00:00+00:00",
+        "preview_version": 2,
     }
 
 
@@ -55,7 +56,10 @@ def test_candidate_fails_when_market_is_unhealthy_or_samples_are_sparse():
 
 def test_candidate_uses_recent_market_evidence_window():
     recent = [_observation("BTC/USD", 0.02) for _ in range(5)]
-    legacy = [_observation("BTC/USD", -0.20, valid=0) for _ in range(5)]
+    legacy = [
+        {**_observation("BTC/USD", -0.20, valid=0), "preview_version": 0}
+        for _ in range(5)
+    ]
 
     report = LiveCandidateEvaluator(evidence_window=5).evaluate(
         ["BTC/USD"],
@@ -66,3 +70,13 @@ def test_candidate_uses_recent_market_evidence_window():
     assert report.eligible is True
     assert report.resolved_samples == 5
     assert report.valid_rate == 1.0
+
+
+def test_candidate_requires_versioned_preview_evidence():
+    report = LiveCandidateEvaluator(min_shadow_samples=1).evaluate(
+        ["BTC/USD"],
+        {"BTC/USD": _health("BTC/USD")},
+        [{**_observation("BTC/USD"), "preview_version": 0}],
+    )[0]
+    assert report.eligible is False
+    assert report.resolved_samples == 0

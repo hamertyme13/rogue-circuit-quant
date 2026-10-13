@@ -1,5 +1,7 @@
 from dataclasses import asdict, dataclass
 
+from live.execution_safety import SHADOW_EXCHANGE_PREVIEW_VERSION
+
 
 LEARNING = "learning"
 HEALTHY = "healthy"
@@ -37,7 +39,7 @@ class MarketHealthEngine:
 
         for row in shadow_observations:
             item = dict(row)
-            if not item.get("resolved_at"):
+            if not item.get("resolved_at") or item.get("preview_version") != SHADOW_EXCHANGE_PREVIEW_VERSION:
                 continue
             symbol = str(item["symbol"])
             bucket = evidence.setdefault(symbol, self._bucket())

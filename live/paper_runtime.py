@@ -76,6 +76,10 @@ class PaperRuntimeState:
             "total_events": 0,
             "executed_events": 0,
             "opportunity_events": 0,
+            "buy_signals": 0,
+            "confident_buy_signals": 0,
+            "backtest_profit_gate_buys": 0,
+            "qualified_win_rate_buys": 0,
             "unverified_cycles": 0,
             "legacy_cycles": 0,
         }

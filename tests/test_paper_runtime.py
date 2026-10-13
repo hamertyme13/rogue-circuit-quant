@@ -43,7 +43,8 @@ def test_paper_runtime_round_trip_restores_portfolio_and_evidence():
     assert restored.portfolio.market_prices["BTC/USD"] == 110
     assert restored.risk.portfolio is restored.portfolio
     assert restored.positions.portfolio is restored.portfolio
-    assert restored_evidence == evidence
+    assert all(restored_evidence[key] == value for key, value in evidence.items())
+    assert restored_evidence["buy_signals"] == 0
 
 
 def test_paper_runtime_preserves_legacy_portfolio_without_counting_old_cycles():

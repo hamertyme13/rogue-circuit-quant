@@ -8,6 +8,7 @@ PAPER = "paper"
 SHADOW = "shadow"
 LIMITED_LIVE = "limited_live"
 EXECUTION_MODES = {PAPER, SHADOW, LIMITED_LIVE}
+SHADOW_EXCHANGE_PREVIEW_VERSION = 2
 
 REQUIRED_LIVE_PERMISSIONS = {
     "query-funds",
@@ -120,6 +121,10 @@ class LiveExecutionSafety:
             ((market.get("limits") or {}).get("amount") or {}).get("min")
             or 0.0
         )
+        minimum_cost = float(
+            ((market.get("limits") or {}).get("cost") or {}).get("min")
+            or 0.0
+        )
         free = balance.get("free", {})
         requested_quantity = float(quantity)
         if fit_to_available and side.lower() == "buy":
@@ -168,6 +173,10 @@ class LiveExecutionSafety:
         if minimum > 0 and precise_quantity < minimum:
             reasons.append(
                 f"Quantity is below Kraken minimum of {minimum:g} {base}."
+            )
+        if minimum_cost > 0 and notional < minimum_cost:
+            reasons.append(
+                f"Notional is below Kraken minimum of {minimum_cost:g} {quote}."
             )
 
         if side.lower() == "buy":

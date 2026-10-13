@@ -28,7 +28,11 @@ from config import (
     MAX_ASSET_EXPOSURE,
     MIN_CASH_RESERVE,
     MAX_ORDER_NOTIONAL,
+    LIMITED_LIVE_MAX_SESSION_ORDERS,
     MIN_SIGNAL_CONFIDENCE,
+    OPPORTUNITY_MIN_CONFIDENCE,
+    OPPORTUNITY_MIN_NET_PROFIT,
+    OPPORTUNITY_MIN_WIN_RATE,
     NOTIFICATION_EMAIL_TO,
     NOTIFICATION_WEBHOOK_URL,
     PAPER_VALIDATION_MAX_DRAWDOWN,
@@ -65,6 +69,7 @@ from live.trader import AutomatedKrakenTrader
 from models.constants import BUY, HOLD, SELL
 from live.execution_safety import (
     EXECUTION_MODES,
+    SHADOW_EXCHANGE_PREVIEW_VERSION,
     LIMITED_LIVE,
     PAPER,
     SHADOW,
@@ -128,6 +133,7 @@ class WebCommandCenter:
         self.trader = AutomatedKrakenTrader(
             client=self.client,
         )
+        self.trader.live_order_journal = self.ledger
         self.paper_events = []
         self.paper_runtime = PaperRuntimeState()
         self.paper_evidence = self.paper_runtime.empty_evidence()
@@ -220,6 +226,7 @@ class WebCommandCenter:
                     "live_orders_enabled": ALLOW_LIVE_TRADING,
                     "permissions": self.kraken_permission_status,
                     "order_previews": self.trader.last_order_previews,
+                    "live_order_journal": self._live_order_journal_status(),
                 },
                 "allocation": self._allocation_status(),
                 "paper_runtime": self._paper_runtime_status(),
@@ -792,6 +799,16 @@ class WebCommandCenter:
             "decisions": self.trader.last_allocation_decisions,
         }
 
+    def _live_order_journal_status(self):
+        rows = self.ledger.live_order_intents()
+        return {
+            "attempts": len(rows),
+            "uncertain": sum(
+                row["status"] in {"pending", "uncertain"} for row in rows
+            ),
+            "awaiting_reconciliation": bool(rows),
+        }
+
     def run_one_cycle(self):
 
         self._assert_writable()
@@ -827,6 +844,23 @@ class WebCommandCenter:
                     self.paper_evidence["opportunity_events"] += sum(
                         1 for event in events if event.opportunity
                     )
+                    for event in events:
+                        if event.action != BUY:
+                            continue
+                        self.paper_evidence["buy_signals"] += 1
+                        if event.confidence < OPPORTUNITY_MIN_CONFIDENCE:
+                            continue
+                        self.paper_evidence["confident_buy_signals"] += 1
+                        performance = self.trader.strategy_performance.get(
+                            event.symbol
+                        )
+                        if performance is None or (
+                            performance.net_profit < OPPORTUNITY_MIN_NET_PROFIT
+                        ):
+                            continue
+                        self.paper_evidence["backtest_profit_gate_buys"] += 1
+                        if performance.win_rate >= OPPORTUNITY_MIN_WIN_RATE:
+                            self.paper_evidence["qualified_win_rate_buys"] += 1
                 else:
                     self.paper_evidence["unverified_cycles"] += 1
                     self.ledger.add_alert(
@@ -913,6 +947,7 @@ class WebCommandCenter:
                         valid=bool(preview.get("valid")),
                         cost_rate=costs / notional if notional else 0.0,
                         reason=event.reason,
+                        preview_version=SHADOW_EXCHANGE_PREVIEW_VERSION,
                     )
 
                 if event.executed:
@@ -1025,6 +1060,13 @@ class WebCommandCenter:
         if not ALLOW_LIVE_TRADING:
             reasons.append("Live order submission is disabled by configuration.")
 
+        journal_reason = self.ledger.live_order_block_reason(
+            self.trader.live_session_id if self.trader.mode == LIMITED_LIVE else None,
+            LIMITED_LIVE_MAX_SESSION_ORDERS,
+        )
+        if journal_reason:
+            reasons.append(journal_reason)
+
         if not emergency_stop_clear:
             reasons.append("Emergency stop is active.")
 
@@ -1046,6 +1088,16 @@ class WebCommandCenter:
             ],
             "emergency_stop_clear": emergency_stop_clear,
             "paper_validation": asdict(validation),
+            "paper_signal_diagnostics": {
+                key: self.paper_evidence[key]
+                for key in (
+                    "buy_signals",
+                    "confident_buy_signals",
+                    "backtest_profit_gate_buys",
+                    "qualified_win_rate_buys",
+                    "opportunity_events",
+                )
+            },
             "shadow_validation": asdict(shadow_validation),
             "reasons": reasons,
             "message": (
@@ -1639,13 +1691,12 @@ class WebCommandCenter:
 
     def _assert_trading_allowed(self):
 
-        if (
-            self.trader.mode == "live"
-            and not self.deployment_mode.live_trading_allowed
-        ):
-            raise RuntimeError(
-                "Live trading is locked by deployment mode."
-            )
+        if self.trader.mode == LIMITED_LIVE:
+            readiness = self.live_readiness()
+            if not readiness["ready"]:
+                raise RuntimeError(
+                    "Live trading is locked: " + " ".join(readiness["reasons"])
+                )
 
     def _audit(
         self,

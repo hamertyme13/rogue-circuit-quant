@@ -1,5 +1,9 @@
 from datetime import datetime, timezone
+import pytest
 
+import live.trader as trader_module
+
+from accounting.ledger import InvestmentLedger
 from live.trader import (
     AutomatedKrakenTrader,
     StrategyPerformanceSnapshot,
@@ -178,6 +182,10 @@ def test_shadow_mode_validates_buy_without_sending_order():
         def amount_to_precision(self, symbol, quantity):
             return str(quantity)
 
+        def validate_market_order(self, symbol, side, amount):
+            assert (symbol, side) == ("BTC/USD", "buy")
+            return {"error": [], "result": {"descr": {"order": "validated"}}}
+
         def create_market_order(self, *args, **kwargs):
             raise AssertionError("Shadow mode must not submit an order.")
 
@@ -210,6 +218,10 @@ def test_shadow_buy_ignores_paper_position_and_uses_kraken_balance():
         def amount_to_precision(self, symbol, quantity):
             return f"{quantity:.4f}"
 
+        def validate_market_order(self, symbol, side, amount):
+            assert (symbol, side) == ("BTC/USD", "buy")
+            return {"error": [], "result": {"descr": {"order": "validated"}}}
+
         def create_market_order(self, *args, **kwargs):
             raise AssertionError("Shadow mode must not submit an order.")
 
@@ -232,6 +244,31 @@ def test_shadow_buy_ignores_paper_position_and_uses_kraken_balance():
     assert "no Kraken order sent" in event.reason
 
 
+def test_shadow_buy_marks_failed_exchange_dry_run_invalid():
+    class ShadowClient:
+        def market(self, symbol):
+            return {"base": "BTC", "quote": "USD", "limits": {"amount": {"min": 0.0001}}}
+
+        def fetch_balance(self):
+            return {"free": {"USD": 100}}
+
+        def amount_to_precision(self, symbol, quantity):
+            return str(quantity)
+
+        def validate_market_order(self, symbol, side, amount):
+            raise RuntimeError("minimum cost rejected")
+
+        def create_market_order(self, *args, **kwargs):
+            raise AssertionError("Shadow mode must not submit an order.")
+
+    trader = AutomatedKrakenTrader(client=ShadowClient())
+    trader.set_execution_mode("shadow")
+    event = trader._execute_signal("BTC/USD", signal(price=100))
+    assert event.executed is False
+    assert "minimum cost rejected" in event.reason
+    assert trader.last_order_previews["BTC/USD"]["valid"] is False
+
+
 def test_limited_live_blocks_buy_without_promoted_symbol():
     trader = AutomatedKrakenTrader()
     trader.set_execution_mode("limited_live")
@@ -243,3 +280,126 @@ def test_limited_live_blocks_buy_without_promoted_symbol():
 
     assert event.executed is False
     assert "promotion gates" in event.reason
+
+
+def test_limited_live_never_sells_a_paper_position():
+    trader = AutomatedKrakenTrader()
+    trader.positions.open_position("BTC/USD", signal(price=100), 0.05)
+    trader.set_execution_mode("limited_live")
+    event = trader._sell("BTC/USD", signal(action="SELL", price=100))
+    assert event.executed is False
+    assert "not opened in this live session" in event.reason
+    assert trader.portfolio.has_open_position_for("BTC/USD")
+
+
+def test_live_order_boundary_caps_and_counts_attempts(monkeypatch, tmp_path):
+    class Client:
+        def __init__(self):
+            self.sent = []
+            self.validated = []
+            self.reject_validation = False
+
+        def fetch_ticker(self, symbol):
+            return {"ask": 100, "bid": 99}
+
+        def fetch_open_orders(self, symbol):
+            return []
+
+        def validate_market_order(self, symbol, side, amount):
+            self.validated.append((symbol, side, amount))
+            if self.reject_validation:
+                raise RuntimeError("Kraken rejected dry run")
+            return {"result": {"descr": {"order": "validated"}}}
+
+        def create_market_order(self, symbol, side, amount, client_order_id):
+            self.sent.append((symbol, side, amount))
+            raise TimeoutError("ambiguous submission")
+
+    monkeypatch.setattr(trader_module, "ALLOW_LIVE_TRADING", True)
+    client = Client()
+    trader = AutomatedKrakenTrader(client=client)
+    trader.live_order_journal = InvestmentLedger(tmp_path / "ledger.sqlite3")
+    trader.set_execution_mode("limited_live")
+    trader.live_symbol_allowlist = {"BTC/USD"}
+
+    trader.emergency_stop()
+    with pytest.raises(RuntimeError, match="emergency stop"):
+        trader._place_live_order("BTC/USD", "buy", 0.05, "id-stop")
+    trader.resume_trading()
+
+    with pytest.raises(RuntimeError, match="order cap"):
+        trader._place_live_order("BTC/USD", "buy", 0.11, "id-1")
+    assert client.sent == []
+
+    client.reject_validation = True
+    with pytest.raises(RuntimeError, match="rejected dry run"):
+        trader._place_live_order("BTC/USD", "buy", 0.05, "id-reject")
+    assert client.sent == []
+    assert trader.live_order_attempts == 0
+    client.reject_validation = False
+
+    with pytest.raises(TimeoutError):
+        trader._place_live_order("BTC/USD", "buy", 0.05, "id-2")
+    assert trader.live_order_attempts == 1
+    assert len(client.sent) == 1
+    assert len(client.validated) == 2
+    assert trader.live_order_journal.live_order_intents()[0]["status"] == "uncertain"
+
+    with pytest.raises(RuntimeError, match="reconcile"):
+        trader._place_live_order("BTC/USD", "buy", 0.05, "id-3")
+    assert len(client.sent) == 1
+
+    restarted = AutomatedKrakenTrader(client=client)
+    restarted.live_order_journal = trader.live_order_journal
+    restarted.set_execution_mode("limited_live")
+    restarted.live_symbol_allowlist = {"BTC/USD"}
+    with pytest.raises(RuntimeError, match="reconciled"):
+        restarted._place_live_order("BTC/USD", "buy", 0.05, "id-restart")
+    assert len(client.sent) == 1
+
+
+def test_emergency_stop_after_live_dry_run_prevents_submission(monkeypatch):
+    class Client:
+        def fetch_ticker(self, symbol):
+            return {"ask": 100}
+
+        def fetch_open_orders(self, symbol):
+            return []
+
+        def validate_market_order(self, symbol, side, amount):
+            trader.emergency_stop()
+
+        def create_market_order(self, *args, **kwargs):
+            raise AssertionError("Emergency stop must prevent submission.")
+
+    monkeypatch.setattr(trader_module, "ALLOW_LIVE_TRADING", True)
+    trader = AutomatedKrakenTrader(client=Client())
+    trader.set_execution_mode("limited_live")
+    trader.live_symbol_allowlist = {"BTC/USD"}
+    with pytest.raises(RuntimeError, match="emergency stop"):
+        trader._place_live_order("BTC/USD", "buy", 0.05, "id-stop")
+    assert trader.live_order_attempts == 0
+
+
+def test_incomplete_live_order_response_stays_uncertain(monkeypatch, tmp_path):
+    class Client:
+        def fetch_ticker(self, symbol):
+            return {"ask": 100}
+
+        def fetch_open_orders(self, symbol):
+            return []
+
+        def validate_market_order(self, symbol, side, amount):
+            return {"result": {"descr": {"order": "validated"}}}
+
+        def create_market_order(self, *args, **kwargs):
+            return {"status": "open"}
+
+    monkeypatch.setattr(trader_module, "ALLOW_LIVE_TRADING", True)
+    trader = AutomatedKrakenTrader(client=Client())
+    trader.live_order_journal = InvestmentLedger(tmp_path / "ledger.sqlite3")
+    trader.set_execution_mode("limited_live")
+    trader.live_symbol_allowlist = {"BTC/USD"}
+    with pytest.raises(RuntimeError, match="reconcile before retrying"):
+        trader._place_live_order("BTC/USD", "buy", 0.05, "ca-incomplete")
+    assert trader.live_order_journal.live_order_intents()[0]["status"] == "uncertain"

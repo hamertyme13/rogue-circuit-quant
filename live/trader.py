@@ -1,6 +1,7 @@
 import time
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 import pandas as pd
 from rich.console import Console
@@ -8,6 +9,8 @@ from rich.console import Console
 from ai.strategy_analysis import StrategyAnalyst, StrategyDecision
 from config import (
     ALLOW_LIVE_TRADING,
+    LIMITED_LIVE_MAX_ORDER_NOTIONAL,
+    LIMITED_LIVE_MAX_SESSION_ORDERS,
     LIVE_CANDLE_LIMIT,
     MARKET_CYCLE_DEADLINE_SECONDS,
     LIVE_CASH_RESERVE_RATE,
@@ -138,6 +141,11 @@ class AutomatedKrakenTrader:
         self.last_order_previews = {}
         self.last_allocation_decisions = {}
         self.live_symbol_allowlist = set()
+        self.live_order_attempts = 0
+        self.live_submission_uncertain = False
+        self.live_owned_symbols = set()
+        self.live_session_id = ""
+        self.live_order_journal = None
         self.stop_requested = lambda: False
         self.cycle_deadline_seconds = MARKET_CYCLE_DEADLINE_SECONDS
         self.last_cycle_note = ""
@@ -294,6 +302,11 @@ class AutomatedKrakenTrader:
         normalized = str(mode or "").lower()
         if normalized not in EXECUTION_MODES:
             raise ValueError(f"Unsupported execution mode: {mode}")
+        if normalized == LIMITED_LIVE and self.execution_mode != LIMITED_LIVE:
+            self.live_order_attempts = 0
+            self.live_submission_uncertain = False
+            self.live_owned_symbols = set()
+            self.live_session_id = uuid4().hex
         self.execution_mode = normalized
 
     def emergency_stop(self):
@@ -424,15 +437,15 @@ class AutomatedKrakenTrader:
             self.portfolio.cash,
             signal.price,
         )
-        quantity = min(
-            quantity,
-            self.max_order_notional / signal.price,
-        )
+        order_cap = self.max_order_notional
+        if self.mode == LIMITED_LIVE:
+            order_cap = min(order_cap, LIMITED_LIVE_MAX_ORDER_NOTIONAL)
+        quantity = min(quantity, order_cap / signal.price)
         allocation = self.allocator.allocate(
             self.portfolio,
             symbol,
             quantity * signal.price,
-            self.max_order_notional,
+            order_cap,
         )
         self.last_allocation_decisions[symbol] = allocation.as_dict()
         if not allocation.allowed:
@@ -534,6 +547,7 @@ class AutomatedKrakenTrader:
             order_status=order_status,
             fill_price=fill_price,
         )
+        self.live_owned_symbols.add(symbol)
 
         return TradeCycleEvent(
             symbol=symbol,
@@ -579,6 +593,29 @@ class AutomatedKrakenTrader:
                 opportunity_reason=self._opportunity_reason(symbol),
             )
 
+        try:
+            self.client.validate_market_order(
+                symbol, "buy", preview.quantity,
+            )
+        except Exception as exc:
+            self.last_order_previews[symbol] = {
+                **preview.as_dict(), "valid": False,
+            }
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                quantity=preview.quantity,
+                order_id=preview.client_order_id,
+                reason=f"Kraken dry-run blocked: {exc}",
+                mode=self.mode,
+                opportunity=self._is_opportunity(symbol, signal),
+                opportunity_reason=self._opportunity_reason(symbol),
+            )
+
         return TradeCycleEvent(
             symbol=symbol,
             action=signal.action,
@@ -602,6 +639,18 @@ class AutomatedKrakenTrader:
         )
 
     def _sell(self, symbol: str, signal) -> TradeCycleEvent:
+
+        if self.mode == LIMITED_LIVE and symbol not in self.live_owned_symbols:
+            return TradeCycleEvent(
+                symbol=symbol,
+                action=signal.action,
+                confidence=signal.confidence,
+                price=signal.price,
+                strategy=signal.strategy,
+                executed=False,
+                reason="Live sell blocked: position was not opened in this live session.",
+                mode=self.mode,
+            )
 
         if not self.portfolio.has_open_position_for(symbol):
             return TradeCycleEvent(
@@ -705,6 +754,7 @@ class AutomatedKrakenTrader:
             symbol,
             signal,
         )
+        self.live_owned_symbols.discard(symbol)
 
         return TradeCycleEvent(
             symbol=symbol,
@@ -734,17 +784,68 @@ class AutomatedKrakenTrader:
                 "only after validating paper trading."
             )
 
-        order = self.client.create_market_order(
-            symbol,
-            side,
-            quantity,
-            client_order_id=client_order_id,
+        if self.kill_switch.active():
+            raise RuntimeError("Live order blocked: emergency stop is active.")
+        if symbol not in self.live_symbol_allowlist:
+            raise RuntimeError("Live order blocked: market is not promoted.")
+        if self.live_order_attempts >= LIMITED_LIVE_MAX_SESSION_ORDERS:
+            raise RuntimeError("Live order blocked: session order limit reached.")
+        if self.live_submission_uncertain:
+            raise RuntimeError(
+                "Live order blocked: reconcile the previous submission on Kraken."
+            )
+        if side == "buy" and self.portfolio.has_open_position_for(symbol):
+            raise RuntimeError("Live buy blocked: position already tracked.")
+        if side == "sell" and symbol not in self.live_owned_symbols:
+            raise RuntimeError("Live sell blocked: no session-owned position.")
+        if quantity <= 0:
+            raise RuntimeError("Live order blocked: quantity must be positive.")
+        ticker = self.client.fetch_ticker(symbol)
+        reference_price = float(ticker.get("ask" if side == "buy" else "bid") or 0)
+        if reference_price <= 0 or quantity * reference_price > LIMITED_LIVE_MAX_ORDER_NOTIONAL:
+            raise RuntimeError("Live order blocked: current price exceeds the $10 order cap.")
+        if self.client.fetch_open_orders(symbol):
+            raise RuntimeError("Live order blocked: an exchange order is already open.")
+
+        self.client.validate_market_order(symbol, side, quantity)
+        if self.kill_switch.active():
+            raise RuntimeError("Live order blocked: emergency stop is active.")
+        if self.live_order_journal is None:
+            raise RuntimeError("Live order blocked: persistent journal is unavailable.")
+        self.live_order_journal.begin_live_order(
+            self.live_session_id, client_order_id, symbol, side, quantity,
+            LIMITED_LIVE_MAX_SESSION_ORDERS,
         )
 
-        order_id = self._order_id(order)
-        status = self._order_status(order)
-        if order_id and status not in {"closed", "filled"}:
-            order = self.client.fetch_order(order_id, symbol)
+        # Count before submission so an ambiguous network failure cannot retry automatically.
+        self.live_order_attempts += 1
+
+        order_id = ""
+        try:
+            order = self.client.create_market_order(
+                symbol,
+                side,
+                quantity,
+                client_order_id=client_order_id,
+            )
+            order_id = self._order_id(order)
+            status = self._order_status(order)
+            if order_id and status not in {"closed", "filled"}:
+                order = self.client.fetch_order(order_id, symbol)
+            if not order_id or not self._order_status(order):
+                raise RuntimeError(
+                    "Kraken order response is incomplete; reconcile before retrying."
+                )
+        except Exception:
+            self.live_submission_uncertain = True
+            self.live_order_journal.update_live_order(
+                client_order_id, "uncertain", order_id,
+            )
+            raise
+
+        self.live_order_journal.update_live_order(
+            client_order_id, "observed", order_id,
+        )
 
         self.console.print(order)
 

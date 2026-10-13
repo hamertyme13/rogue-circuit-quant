@@ -1,8 +1,41 @@
 from datetime import datetime, timezone
 
+from exchange.client import KrakenClient
 from live.trader import MarketOpportunity
 from models.signal import Signal
 from web_app import WebCommandCenter
+
+
+def test_key_info_uses_signed_generic_request_when_ccxt_has_no_helper():
+    class Exchange:
+        def request(self, path, api, method, params):
+            assert (path, api, method, params) == (
+                "GetApiKeyInfo", "private", "POST", {}
+            )
+            return {"result": {"permissions": ["query-funds"]}}
+
+    client = KrakenClient()
+    client.exchange = Exchange()
+    assert client.fetch_api_key_info()["result"]["permissions"] == [
+        "query-funds"
+    ]
+
+
+def test_validate_market_order_sends_only_exchange_dry_run():
+    class Exchange:
+        def request(self, path, api, method, params):
+            assert (path, api, method) == ("AddOrder", "private", "POST")
+            assert params == {
+                "pair": "XXBTZUSD", "type": "buy", "ordertype": "market",
+                "volume": "0.0002", "validate": True,
+            }
+            return {"error": [], "result": {"descr": {"order": "validated"}}}
+
+    client = KrakenClient()
+    client.exchange = Exchange()
+    client.market = lambda symbol: {"id": "XXBTZUSD"}
+    client.amount_to_precision = lambda symbol, amount: "0.0002"
+    assert client.validate_market_order("BTC/USD", "buy", 0.0002)["error"] == []
 
 
 class FakeKrakenClient:

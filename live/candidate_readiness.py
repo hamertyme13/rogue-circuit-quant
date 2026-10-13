@@ -1,6 +1,7 @@
 from dataclasses import asdict, dataclass
 
 from live.market_health import HEALTHY
+from live.execution_safety import SHADOW_EXCHANGE_PREVIEW_VERSION
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ class LiveCandidateEvaluator:
         rows_by_symbol = {}
         for row in observations:
             item = dict(row)
-            if not item.get("resolved_at"):
+            if not item.get("resolved_at") or item.get("preview_version") != SHADOW_EXCHANGE_PREVIEW_VERSION:
                 continue
             rows_by_symbol.setdefault(str(item["symbol"]), []).append(item)
 

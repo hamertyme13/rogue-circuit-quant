@@ -98,12 +98,32 @@ class KrakenClient:
         method = getattr(self.exchange, "privatePostGetApiKeyInfo", None)
         if method is None:
             method = getattr(self.exchange, "private_post_getapikeyinfo", None)
-        if method is None:
-            raise RuntimeError("Installed ccxt does not expose GetApiKeyInfo.")
-        return method()
+        if method is not None:
+            return method()
+        # Kraken may expose a signed endpoint before ccxt generates a helper.
+        return self.exchange.request("GetApiKeyInfo", "private", "POST", {})
 
     def amount_to_precision(self, symbol: str, amount: float) -> str:
         return self.exchange.amount_to_precision(symbol, amount)
+
+    def validate_market_order(
+        self, symbol: str, side: str, amount: float,
+    ) -> dict:
+        """Ask Kraken to validate an order without submitting it to the engine."""
+        market = self.market(symbol)
+        payload = self.exchange.request("AddOrder", "private", "POST", {
+            "pair": market["id"],
+            "type": side.lower(),
+            "ordertype": "market",
+            "volume": self.amount_to_precision(symbol, amount),
+            "validate": True,
+        })
+        errors = payload.get("error") or []
+        if errors:
+            raise RuntimeError("Kraken order validation failed: " + "; ".join(errors))
+        if not payload.get("result"):
+            raise RuntimeError("Kraken order validation returned no result.")
+        return payload
 
     def create_market_order(
         self,

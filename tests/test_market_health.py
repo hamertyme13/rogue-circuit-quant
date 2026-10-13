@@ -11,6 +11,7 @@ def _shadow(symbol, value):
         "symbol": symbol,
         "net_return": value,
         "resolved_at": "2026-09-01T00:00:00+00:00",
+        "preview_version": 2,
     }
 
 
@@ -44,3 +45,12 @@ def test_market_health_keeps_small_sample_in_learning():
     )
 
     assert profiles["SOL/USD"].status == LEARNING
+
+
+def test_market_health_ignores_legacy_shadow_without_erasing_paper():
+    profiles = MarketHealthEngine().evaluate(
+        [{**_shadow("BTC/USD", -0.5), "preview_version": 0}],
+        [{"symbol": "BTC/USD", "pnl": 2.0}],
+    )
+    assert profiles["BTC/USD"].samples == 1
+    assert profiles["BTC/USD"].average_shadow_return == 0.0

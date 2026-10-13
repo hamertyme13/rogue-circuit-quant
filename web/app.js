@@ -207,6 +207,10 @@ function renderExecutionSafety(safety, readiness) {
   modeSelect.value = safety.mode || "paper";
   modeSelect.querySelector('option[value="limited_live"]').disabled = !readiness.ready;
   document.getElementById("permission-status").textContent = permissions.message || "Not checked";
+  const journal = safety.live_order_journal || {};
+  document.getElementById("live-order-journal-detail").textContent = journal.attempts
+    ? `${journal.attempts} live order attempt(s) recorded; ${journal.uncertain || 0} unresolved submission(s). Prior sessions require reconciliation before another live session.`
+    : "No live order attempts recorded.";
   document.getElementById("automation-status").textContent = safety.mode === "shadow"
     ? "Shadow mode"
     : safety.mode === "limited_live"
@@ -268,6 +272,7 @@ function renderTargetAsset(target) {
 
 function renderLiveReadiness(readiness) {
   const validation = readiness.paper_validation || {};
+  const buys = readiness.paper_signal_diagnostics || {};
   const shadow = readiness.shadow_validation || {};
   const label = readiness.ready ? "Ready" : "Locked";
   const reason = readiness.reasons?.[0] || readiness.message;
@@ -281,8 +286,12 @@ function renderLiveReadiness(readiness) {
   document.getElementById("shadow-valid-rate").textContent = ratio(shadow.valid_rate || 0);
   document.getElementById("shadow-profit-rate").textContent = ratio(shadow.profitable_rate || 0);
   document.getElementById("shadow-net-return").textContent = ratio(shadow.average_net_return || 0);
+  document.getElementById("shadow-evidence-detail").textContent =
+    `${shadow.resolved_samples || 0} current preview outcomes; ${shadow.legacy_samples || 0} older observations retained but excluded from live readiness.`;
   document.getElementById("live-gate-message").textContent = reason;
   document.getElementById("live-gate-message").dataset.ready = readiness.ready ? "true" : "false";
+  document.getElementById("paper-buy-gate-detail").textContent =
+    `Buy gate (new qualified runs): ${buys.buy_signals || 0} BUY, ${buys.confident_buy_signals || 0} confident, ${buys.backtest_profit_gate_buys || 0} meet profit threshold, ${buys.qualified_win_rate_buys || 0} meet win-rate threshold, ${buys.opportunity_events || 0} opportunities total.`;
 }
 
 function renderControls(controls) {

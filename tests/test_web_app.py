@@ -1,7 +1,40 @@
 from web_app import WebCommandCenter
 import threading
+import pytest
+from dataclasses import replace
 
-from live.trader import TradeCycleEvent
+from live.trader import StrategyPerformanceSnapshot, TradeCycleEvent
+
+
+def test_limited_live_cycle_rechecks_readiness(tmp_path):
+    center = WebCommandCenter(
+        tmp_path / "ledger.sqlite3",
+        tmp_path / "vault.json",
+        tmp_path / "vault.key",
+    )
+    center.trader.set_execution_mode("limited_live")
+    with pytest.raises(RuntimeError, match="Live trading is locked"):
+        center.run_one_cycle()
+
+
+def test_live_readiness_blocks_prior_session_order_intent(tmp_path):
+    center = WebCommandCenter(
+        tmp_path / "ledger.sqlite3",
+        tmp_path / "vault.json",
+        tmp_path / "vault.key",
+    )
+    center.ledger.begin_live_order(
+        "old-session", "ca-existing", "BTC/USD", "buy", 0.01, 2,
+    )
+    center.ledger.update_live_order("ca-existing", "observed", "kraken-1")
+    state = center.state()
+    reasons = state["live_readiness"]["reasons"]
+    assert any("prior-session orders" in reason for reason in reasons)
+    assert state["execution_safety"]["live_order_journal"] == {
+        "attempts": 1,
+        "uncertain": 0,
+        "awaiting_reconciliation": True,
+    }
 
 
 def test_web_command_center_tracks_browser_ledger_state(tmp_path):
@@ -33,6 +66,7 @@ def test_web_command_center_tracks_browser_ledger_state(tmp_path):
     assert "shadow_validation" in state["live_readiness"]
     assert "candidate_validation" in state["live_readiness"]
     assert state["live_readiness"]["eligible_candidate_count"] == 0
+    assert state["execution_safety"]["live_order_journal"]["attempts"] == 0
     assert "live_candidates" in state
     assert state["live_readiness"]["shadow_validation"]["passed"] is False
     assert state["shadow_observations"] == []
@@ -367,6 +401,52 @@ def test_paper_readiness_counts_only_complete_fresh_market_cycles(tmp_path):
     assert restored.paper_evidence["unverified_cycles"] == 1
 
 
+def test_paper_buy_gate_diagnostics_count_only_qualified_cycles(tmp_path):
+    center = WebCommandCenter(
+        tmp_path / "ledger.sqlite3",
+        tmp_path / "vault.json",
+        tmp_path / "vault.key",
+    )
+    center.trader.symbols = ["BTC/USD"]
+    center.trader.strategy_performance["BTC/USD"] = StrategyPerformanceSnapshot(
+        symbol="BTC/USD", strategy="Momentum", score=1,
+        net_profit=2, win_rate=0.6, drawdown=0.01, trades=3,
+        rationale="Test result.",
+    )
+    buy = TradeCycleEvent(
+        symbol="BTC/USD", action="BUY", confidence=0.8, price=100,
+        strategy="Momentum", executed=False, opportunity=True, mode="paper",
+    )
+    center.trader.run_once = lambda: [buy]
+    center.run_one_cycle()
+    diagnostics = center.live_readiness()["paper_signal_diagnostics"]
+    assert diagnostics == {
+        "buy_signals": 1,
+        "confident_buy_signals": 1,
+        "backtest_profit_gate_buys": 1,
+        "qualified_win_rate_buys": 1,
+        "opportunity_events": 1,
+    }
+
+    center.trader.last_cycle_note = "Partial cycle."
+    center.run_one_cycle()
+    assert center.live_readiness()["paper_signal_diagnostics"] == diagnostics
+
+    center.trader.last_cycle_note = ""
+    center.trader.run_once = lambda: [replace(buy, opportunity=False)]
+    center.trader.strategy_performance["BTC/USD"].net_profit = -1
+    center.run_one_cycle()
+    assert center.paper_evidence["buy_signals"] == 2
+    assert center.paper_evidence["backtest_profit_gate_buys"] == 1
+
+    center.trader.strategy_performance["BTC/USD"].net_profit = 2
+    center.trader.strategy_performance["BTC/USD"].win_rate = 0.2
+    center.run_one_cycle()
+    assert center.paper_evidence["backtest_profit_gate_buys"] == 2
+    assert center.paper_evidence["qualified_win_rate_buys"] == 1
+    assert center.paper_evidence["opportunity_events"] == 1
+
+
 def test_shadow_cycle_records_actionable_buy_without_opportunity_label(tmp_path):
     center = WebCommandCenter(
         tmp_path / "ledger.sqlite3",
@@ -401,6 +481,7 @@ def test_shadow_cycle_records_actionable_buy_without_opportunity_label(tmp_path)
     assert len(rows) == 1
     assert rows[0]["symbol"] == "BTC/USD"
     assert rows[0]["valid"] == 1
+    assert rows[0]["preview_version"] == 2
     assert rows[0]["cost_rate"] == 0.01
 
 
@@ -442,6 +523,7 @@ def test_dashboard_reads_resolved_shadow_rows_from_sqlite(tmp_path):
         quantity=0.05,
         valid=True,
         cost_rate=0.01,
+        preview_version=2,
     )
     center.ledger.resolve_shadow_observations("BTC/USD", 102)
 

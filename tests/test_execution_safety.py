@@ -102,3 +102,17 @@ def test_shadow_preview_fits_order_to_available_quote_balance():
     assert preview.valid is True
     assert preview.quantity == 0.0001
     assert preview.required_balance <= preview.available_balance
+
+
+def test_order_preview_rejects_exchange_minimum_cost():
+    class CostClient(FakeClient):
+        def market(self, symbol):
+            market = super().market(symbol)
+            market["limits"]["cost"] = {"min": 10}
+            return market
+
+    preview = LiveExecutionSafety().preview(
+        CostClient(usd=100), "BTC/USD", "buy", 0.0001, 50_000,
+    )
+    assert preview.valid is False
+    assert any("minimum of 10 USD" in reason for reason in preview.reasons)

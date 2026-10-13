@@ -12,12 +12,14 @@ def test_shadow_validation_passes_healthy_resolved_samples():
             "cost_rate": 0.01,
             "net_return": 0.03,
             "resolved_at": "2026-01-01T00:01:00+00:00",
+            "preview_version": 2,
         },
         {
             "valid": 1,
             "cost_rate": 0.01,
             "net_return": 0.02,
             "resolved_at": "2026-01-01T00:02:00+00:00",
+            "preview_version": 2,
         },
     ]
 
@@ -48,12 +50,14 @@ def test_shadow_validation_uses_recent_evidence_window():
             "cost_rate": 0.01,
             "net_return": 0.02,
             "resolved_at": "2026-02-01T00:00:00+00:00",
+            "preview_version": 2,
         },
         {
             "valid": 1,
             "cost_rate": 0.01,
             "net_return": 0.01,
             "resolved_at": "2026-01-31T00:00:00+00:00",
+            "preview_version": 2,
         },
     ]
     legacy = [{
@@ -61,6 +65,7 @@ def test_shadow_validation_uses_recent_evidence_window():
         "cost_rate": 0.0,
         "net_return": -0.5,
         "resolved_at": "2025-01-01T00:00:00+00:00",
+        "preview_version": 0,
     }]
 
     unresolved = [{
@@ -68,6 +73,7 @@ def test_shadow_validation_uses_recent_evidence_window():
         "cost_rate": 0.01,
         "net_return": None,
         "resolved_at": None,
+        "preview_version": 2,
     }]
 
     report = validator.evaluate(unresolved + recent + legacy)

@@ -275,3 +275,75 @@ unverified runs. Version 1 saved portfolios are restored intact, while their
 old cycle counts are labeled legacy and excluded from readiness because those
 counts did not prove complete market coverage. New verified counters persist in
 version 2 of the paper runtime state.
+
+## Sprint 25 - Limited-Live Order Boundary
+
+Status: implemented; live trading remains locked until readiness passes.
+
+Each live cycle rechecks the paper, shadow, candidate, deployment, permission,
+and emergency-stop gates. A live order is capped at $10 using a fresh exchange
+bid/ask quote, requires a promoted symbol and no existing open order, and the
+session permits at most two order attempts. An ambiguous submission freezes
+further orders until the app leaves live mode and Kraken is reconciled. Live sells cannot use positions
+created only in the paper portfolio. Live mode still resets to Paper on app
+restart; the current in-memory position tracker is not durable enough for
+unattended multi-day live operation. Rotate any previously shared Kraken API
+key before attempting a limited-live activation. Do not interpret these
+controls or paper results as a profit guarantee.
+
+## Sprint 26 - Paper Opportunity Diagnostics
+
+Status: implemented; live trading remains locked.
+
+Qualified paper cycles now record each BUY opportunity gate separately:
+confidence, configured backtest net-profit threshold, and minimum backtest win rate. The
+Trading Stage displays these counts alongside the existing opportunity count.
+New diagnostic counts start from zero for older saved runtime files because
+historical decisions did not retain the contemporaneous backtest snapshot.
+No old cycles are relabeled and no live-readiness threshold is lowered.
+
+## Sprint 27 - Shadow Evidence Provenance
+
+Status: implemented; fresh Shadow validation still required.
+
+The existing 76 Shadow observations were created by the old risk-blocked path,
+so they cannot attest to today's balance-aware Kraken preview. The ledger now
+adds a version marker to new preview observations and preserves old rows as
+legacy during migration. Shadow validation, candidate eligibility, and market
+health exclude legacy Shadow rows, while the UI reports how many were retained.
+No old result is deleted or promoted, and Limited Live remains locked until
+new resolved previews pass the original thresholds.
+
+## Sprint 28 - Kraken Dry-Run Shadow Validation
+
+Status: implemented; no live orders are sent by Shadow mode.
+
+Kraken documents `AddOrder` with `validate=true` as checking an order without
+trading in the matching engine. Shadow BUYs first check local precision,
+balances, fees, slippage, amount minimum, and cost minimum, then call that
+signed exchange dry run. Rejections remain invalid observations. Only version 2
+observations from this path count toward Shadow readiness; older local-only
+and risk-blocked observations remain visible but are excluded. The Limited Live
+gate and order submission switch remain unchanged.
+
+## Sprint 29 - Live Submission Dry-Run Gate
+
+Status: implemented; Limited Live remains locked by readiness and deployment.
+
+The live-order boundary now requires a successful Kraken `AddOrder` validation
+request before any real submission, for either buy or sell. Dry-run rejection
+does not consume the session order-attempt budget because no matching-engine
+order was sent. Emergency Stop is rechecked after the network round trip.
+Ambiguous real submissions still freeze the session pending reconciliation.
+
+## Sprint 30 - Durable Live-Order Intent Lock
+
+Status: implemented; reconciliation and live activation remain locked.
+
+Before any real order request, the app records its client ID, market, side,
+quantity, and live-session ID in SQLite. A pending or uncertain result blocks
+all later live orders, including after restart. An observed order allows only
+the remaining attempts in the same two-order session; a later session is
+blocked until prior orders are reconciled. The journal is fail-closed when
+unavailable. This sprint does not add a manual clear switch: exchange order
+status and owned positions must be reconciled first, and no live order was sent.
